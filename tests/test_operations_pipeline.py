@@ -1,5 +1,5 @@
 """
-Unit tests for dupefinder/operations/pipeline.py.
+Unit tests for pixsieve/operations/pipeline.py.
 """
 
 import pytest
@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from PIL import Image
 
-from dupefinder.operations.pipeline import run_pipeline, AVAILABLE_STEPS
+from pixsieve.operations.pipeline import run_pipeline, AVAILABLE_STEPS
 
 
 class TestRunPipeline:

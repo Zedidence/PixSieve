@@ -1,5 +1,5 @@
 """
-State management for Duplicate Image Finder GUI.
+State management for PixSieve GUI.
 
 Handles persistence of scan state, user selections, and directory history
 to allow recovery after browser refresh or application restart.

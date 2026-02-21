@@ -1,5 +1,5 @@
 """
-Duplicate Image Finder
+PixSieve
 ======================
 A comprehensive tool for finding duplicate and visually similar images.
 

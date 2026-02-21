@@ -1,12 +1,12 @@
 """
-Unit tests for dupefinder/utils/operations.py utility functions.
+Unit tests for pixsieve/utils/operations.py utility functions.
 """
 
 import pytest
 from pathlib import Path
 from datetime import datetime
 
-from dupefinder.utils.operations import (
+from pixsieve.utils.operations import (
     get_unique_path,
     sanitize_filename,
     truncate_path,

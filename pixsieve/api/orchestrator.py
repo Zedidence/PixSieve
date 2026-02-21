@@ -1,5 +1,5 @@
 """
-Scan orchestration for the Duplicate Image Finder.
+Scan orchestration for the PixSieve.
 
 Provides the ScanOrchestrator class that coordinates the scanning process,
 including file discovery, image analysis, duplicate detection, and progress tracking.

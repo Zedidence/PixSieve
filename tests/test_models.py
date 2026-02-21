@@ -3,7 +3,7 @@ Unit tests for data models (ImageInfo and DuplicateGroup).
 """
 
 import pytest
-from dupefinder.models import ImageInfo, DuplicateGroup, format_size
+from pixsieve.models import ImageInfo, DuplicateGroup, format_size
 
 
 class TestFormatSize:

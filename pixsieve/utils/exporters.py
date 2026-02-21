@@ -1,5 +1,5 @@
 """
-Export functionality for the Duplicate Image Finder.
+Export functionality for the PixSieve.
 
 Provides functions to export duplicate detection results to various file formats
 including TXT and CSV.

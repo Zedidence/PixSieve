@@ -1,5 +1,5 @@
 """
-Unit tests for dupefinder/api/operations_routes.py Flask endpoints.
+Unit tests for pixsieve/api/operations_routes.py Flask endpoints.
 """
 
 import pytest

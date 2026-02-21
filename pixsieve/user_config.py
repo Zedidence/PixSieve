@@ -1,13 +1,13 @@
 """
-User configuration management for Duplicate Image Finder.
+User configuration management for PixSieve.
 
 Supports configuration from multiple sources (in order of priority):
 1. Runtime parameters (highest priority)
 2. Environment variables
-3. User config file (~/.dupefinder/config.json)
+3. User config file (~/.pixsieve/config.json)
 4. Default values from config.py (lowest priority)
 
-Configuration file location: ~/.dupefinder/config.json
+Configuration file location: ~/.pixsieve/config.json
 
 Example config.json:
 {
@@ -60,20 +60,30 @@ class UserConfig:
     def config_dir(self) -> Path:
         """Get the configuration directory path."""
         # Check environment variable first
-        env_dir = os.getenv('DUPEFINDER_CONFIG_DIR')
+        env_dir = os.getenv('PIXSIEVE_CONFIG_DIR')
         if env_dir:
             return Path(env_dir)
 
-        # Default to ~/.dupefinder/
-        return Path.home() / '.dupefinder'
+        # Default to ~/.pixsieve/
+        return Path.home() / '.pixsieve'
 
     @property
     def config_file_path(self) -> Path:
         """Get the configuration file path."""
         return self.config_dir / 'config.json'
 
+    def _migrate_legacy_config(self) -> None:
+        """Migrate config from ~/.dupefinder/ to ~/.pixsieve/ if needed."""
+        legacy_file = Path.home() / '.dupefinder' / 'config.json'
+        if legacy_file.exists() and not self.config_file_path.exists():
+            import shutil
+            self.config_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(legacy_file, self.config_file_path)
+            logger.info(f"Migrated config from {legacy_file} to {self.config_file_path}")
+
     def _load_config_file(self) -> dict:
         """Load configuration from JSON file."""
+        self._migrate_legacy_config()
         if not self.config_file_path.exists():
             return {}
 
@@ -212,7 +222,7 @@ class UserConfig:
         self.config_dir.mkdir(parents=True, exist_ok=True)
 
         example_config = {
-            "_comment": "DupeFinder User Configuration",
+            "_comment": "PixSieve User Configuration",
             "default_threshold": DEFAULT_THRESHOLD,
             "default_workers": DEFAULT_WORKERS,
             "lsh_auto_threshold": LSH_AUTO_THRESHOLD,

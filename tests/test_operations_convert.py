@@ -1,12 +1,12 @@
 """
-Unit tests for dupefinder/operations/convert.py.
+Unit tests for pixsieve/operations/convert.py.
 """
 
 import pytest
 from pathlib import Path
 from PIL import Image
 
-from dupefinder.operations.convert import fix_extensions, batch_convert_to_jpg
+from pixsieve.operations.convert import fix_extensions, batch_convert_to_jpg
 
 
 class TestFixExtensions:

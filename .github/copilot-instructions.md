@@ -58,8 +58,8 @@ Example: `analyze_images_parallel(filepaths, max_workers=4, show_progress=True)`
 - History manager tracks recent directories
 
 ## Development Workflow
-- **Run GUI**: `python -m dupefinder` (opens browser)
-- **Run CLI**: `python -m dupefinder cli /path/to/dir --action move --trash-dir ./dupes`
+- **Run GUI**: `python -m pixsieve` (opens browser)
+- **Run CLI**: `python -m pixsieve cli /path/to/dir --action move --trash-dir ./dupes`
 - **Install**: `pip install -e .` (editable install)
 - **Test**: No formal tests yet, but validate with sample images
 - **Package**: `python setup.py sdist bdist_wheel`

@@ -1,6 +1,6 @@
-# DupeFinder Test Suite
+# PixSieve Test Suite
 
-This directory contains the test suite for the Duplicate Image Finder application.
+This directory contains the test suite for the PixSieve application.
 
 ## Running Tests
 
@@ -21,7 +21,7 @@ pip install pytest pytest-cov
 pytest
 
 # Or with coverage
-pytest --cov=dupefinder --cov-report=html
+pytest --cov=pixsieve --cov-report=html
 ```
 
 ### Run Specific Test Files
@@ -80,7 +80,7 @@ pytest -n auto
 To generate a coverage report:
 
 ```bash
-pytest --cov=dupefinder --cov-report=html
+pytest --cov=pixsieve --cov-report=html
 ```
 
 Then open `htmlcov/index.html` in your browser to view the detailed coverage report.

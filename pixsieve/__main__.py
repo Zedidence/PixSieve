@@ -1,14 +1,14 @@
 """
-Allow running the package with: python -m dupefinder
+Allow running the package with: python -m pixsieve
 
 By default, launches the GUI. Use 'cli' subcommand for command-line interface.
 
 Examples:
-    python -m dupefinder                     # Launch GUI
-    python -m dupefinder gui                 # Launch GUI (explicit)
-    python -m dupefinder cli                 # Launch CLI (interactive)
-    python -m dupefinder cli /path/to/photos # CLI with path
-    python -m dupefinder config --init       # Create example config file
+    python -m pixsieve                     # Launch GUI
+    python -m pixsieve gui                 # Launch GUI (explicit)
+    python -m pixsieve cli                 # Launch CLI (interactive)
+    python -m pixsieve cli /path/to/photos # CLI with path
+    python -m pixsieve config --init       # Create example config file
 """
 
 import sys
@@ -37,7 +37,7 @@ def main():
             if config.create_example_config():
                 print(f"✓ Created example configuration file at:")
                 print(f"  {config.config_file_path}")
-                print(f"\nEdit this file to customize DupeFinder settings.")
+                print(f"\nEdit this file to customize PixSieve settings.")
             else:
                 print(f"✗ Failed to create configuration file.")
                 sys.exit(1)
@@ -48,7 +48,7 @@ def main():
                 print(f"Status: ✓ Found")
             else:
                 print(f"Status: ✗ Not found (using defaults)")
-                print(f"\nRun 'python -m dupefinder config --init' to create one.")
+                print(f"\nRun 'python -m pixsieve config --init' to create one.")
 
             print(f"\nCurrent settings:")
             print(f"  default_threshold: {config.default_threshold}")

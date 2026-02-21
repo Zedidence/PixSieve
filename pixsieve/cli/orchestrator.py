@@ -1,5 +1,5 @@
 """
-CLI workflow orchestration for the Duplicate Image Finder.
+CLI workflow orchestration for the PixSieve.
 
 Provides the CLIOrchestrator class that coordinates the entire CLI scanning
 workflow from argument parsing through final reporting, and routes operations

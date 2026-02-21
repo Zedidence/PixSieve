@@ -1,5 +1,5 @@
 """
-Platform-specific capability checks for the Duplicate Image Finder.
+Platform-specific capability checks for the PixSieve.
 
 Provides functions to check support for filesystem operations that vary by
 platform and configuration, such as hardlinks and symlinks.

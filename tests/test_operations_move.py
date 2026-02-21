@@ -1,12 +1,12 @@
 """
-Unit tests for dupefinder/operations/move.py.
+Unit tests for pixsieve/operations/move.py.
 """
 
 import pytest
 from pathlib import Path
 from PIL import Image
 
-from dupefinder.operations.move import move_to_parent, move_with_structure
+from pixsieve.operations.move import move_to_parent, move_with_structure
 
 
 class TestMoveToParent:

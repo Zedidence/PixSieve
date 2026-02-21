@@ -1,5 +1,5 @@
 """
-Unit tests for dupefinder/cli/operations_orchestrator.py.
+Unit tests for pixsieve/cli/operations_orchestrator.py.
 """
 
 import pytest
@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 from PIL import Image
 
-from dupefinder.cli.operations_orchestrator import OperationsOrchestrator
+from pixsieve.cli.operations_orchestrator import OperationsOrchestrator
 
 
 @pytest.fixture

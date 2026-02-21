@@ -1,4 +1,4 @@
-# Duplicate Image Finder & Media Manager
+# PixSieve - Image Deduplication & Media Manager
 
 A comprehensive tool for finding duplicate and visually similar images, plus a full suite of media file operations. Features both a web GUI and command-line interface, intelligent caching for fast re-scans, LSH-accelerated perceptual matching for large collections, and optimized handling of 650K+ image libraries.
 
@@ -47,7 +47,7 @@ pip install -e .
 ### Web GUI
 
 ```bash
-python -m dupefinder
+python -m pixsieve
 ```
 
 Opens a browser at `http://localhost:5000`. Use the **Duplicate Finder** tab to scan and review duplicates, and the **File Operations** tab for all 12 file management operations.
@@ -56,16 +56,16 @@ Opens a browser at `http://localhost:5000`. Use the **Duplicate Finder** tab to 
 
 ```bash
 # Scan for duplicates — report only
-python -m dupefinder cli /path/to/photos
+python -m pixsieve cli /path/to/photos
 
 # Move duplicates to a trash folder
-python -m dupefinder cli duplicates /path/to/photos --action move --trash-dir ./trash --no-dry-run
+python -m pixsieve cli duplicates /path/to/photos --action move --trash-dir ./trash --no-dry-run
 
 # File operations (all default to dry-run — add --no-dry-run to execute)
-python -m dupefinder cli move-to-parent /path/to/photos --no-dry-run
-python -m dupefinder cli rename random /path/to/photos --length 16 --no-dry-run
-python -m dupefinder cli sort alpha /path/to/photos --no-dry-run
-python -m dupefinder cli pipeline /path/to/photos \
+python -m pixsieve cli move-to-parent /path/to/photos --no-dry-run
+python -m pixsieve cli rename random /path/to/photos --length 16 --no-dry-run
+python -m pixsieve cli sort alpha /path/to/photos --no-dry-run
+python -m pixsieve cli pipeline /path/to/photos \
   --steps "random_rename,convert_jpg,cleanup_empty" --no-dry-run
 ```
 
@@ -88,8 +88,8 @@ python -m dupefinder cli pipeline /path/to/photos \
 ## Package Structure
 
 ```
-DupeFinderGUI/
-├── dupefinder/
+PixSieve/
+├── pixsieve/
 │   ├── config.py        # Configuration constants
 │   ├── models.py        # ImageInfo and DuplicateGroup data classes
 │   ├── lsh.py           # Locality-Sensitive Hashing implementation
@@ -130,4 +130,4 @@ DupeFinderGUI/
 MIT License — feel free to use and modify!
 
 **Author:** Zach
-**Repository:** [Zedidence/DupeFinderGUI](https://github.com/Zedidence/DupeFinderGUI)
+**Repository:** [Zedidence/PixSieve](https://github.com/Zedidence/PixSieve)

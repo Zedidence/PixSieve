@@ -3,7 +3,7 @@
 The CLI uses a subcommand architecture. The `duplicates` subcommand is the default when no subcommand is given, keeping existing usage patterns fully backward compatible.
 
 ```
-python -m dupefinder [gui | cli [subcommand] | config]
+python -m pixsieve [gui | cli [subcommand] | config]
 ```
 
 ---
@@ -29,23 +29,23 @@ python -m dupefinder [gui | cli [subcommand] | config]
 
 ```bash
 # Basic scan — report only (backward compatible)
-python -m dupefinder cli /path/to/photos
+python -m pixsieve cli /path/to/photos
 
 # Explicit subcommand
-python -m dupefinder cli duplicates /path/to/photos --threshold 5
+python -m pixsieve cli duplicates /path/to/photos --threshold 5
 
 # Move duplicates to a folder
-python -m dupefinder cli duplicates /path/to/photos --action move --trash-dir ./trash --no-dry-run
+python -m pixsieve cli duplicates /path/to/photos --action move --trash-dir ./trash --no-dry-run
 
 # Actually delete duplicates (BE CAREFUL)
-python -m dupefinder cli duplicates /path/to/photos --action delete --no-dry-run
+python -m pixsieve cli duplicates /path/to/photos --action delete --no-dry-run
 
 # Force LSH on or off
-python -m dupefinder cli /path/to/photos --lsh
-python -m dupefinder cli /path/to/photos --no-lsh
+python -m pixsieve cli /path/to/photos --lsh
+python -m pixsieve cli /path/to/photos --no-lsh
 
 # Export results
-python -m dupefinder cli /path/to/photos --export results.csv --export-format csv
+python -m pixsieve cli /path/to/photos --export results.csv --export-format csv
 ```
 
 ### Options
@@ -78,8 +78,8 @@ All operation subcommands default to **dry-run mode**. Use `--no-dry-run` to exe
 Move all images from subdirectories into the parent folder, flattening the hierarchy.
 
 ```bash
-python -m dupefinder cli move-to-parent /path/to/photos
-python -m dupefinder cli move-to-parent /path/to/photos --extensions .jpg .png --no-dry-run
+python -m pixsieve cli move-to-parent /path/to/photos
+python -m pixsieve cli move-to-parent /path/to/photos --extensions .jpg .png --no-dry-run
 ```
 
 | Option | Description |
@@ -94,8 +94,8 @@ python -m dupefinder cli move-to-parent /path/to/photos --extensions .jpg .png -
 Move files from source to destination while preserving directory structure.
 
 ```bash
-python -m dupefinder cli move /path/to/source /path/to/dest
-python -m dupefinder cli move /path/to/source /path/to/dest --overwrite --no-dry-run
+python -m pixsieve cli move /path/to/source /path/to/dest
+python -m pixsieve cli move /path/to/source /path/to/dest --overwrite --no-dry-run
 ```
 
 | Option | Description |
@@ -112,11 +112,11 @@ Two rename strategies: `random` (alphanumeric names) and `parent` (folder-based 
 
 ```bash
 # Random alphanumeric names
-python -m dupefinder cli rename random /path/to/photos --length 16 --no-dry-run
-python -m dupefinder cli rename random /path/to/photos --extensions .jpg .png --no-recursive
+python -m pixsieve cli rename random /path/to/photos --length 16 --no-dry-run
+python -m pixsieve cli rename random /path/to/photos --extensions .jpg .png --no-recursive
 
 # Parent-folder-based names (e.g., ArtistA_AlbumX_1.jpg)
-python -m dupefinder cli rename parent /path/to/photos --no-dry-run
+python -m pixsieve cli rename parent /path/to/photos --no-dry-run
 ```
 
 **Options for `rename random`:**
@@ -137,22 +137,22 @@ Two sort strategies: `alpha` (alphabetical grouping) and `color` (color-based so
 
 ```bash
 # Sort into A-G, H-N, O-T, U-Z, 0-9 folders
-python -m dupefinder cli sort alpha /path/to/photos --no-dry-run
+python -m pixsieve cli sort alpha /path/to/photos --no-dry-run
 
 # Sort by dominant color
-python -m dupefinder cli sort color /path/to/photos --method dominant --no-dry-run
+python -m pixsieve cli sort color /path/to/photos --method dominant --no-dry-run
 
 # Classify as color vs. black & white
-python -m dupefinder cli sort color /path/to/photos --method bw --no-dry-run
+python -m pixsieve cli sort color /path/to/photos --method bw --no-dry-run
 
 # Sort by color palette (3 colors)
-python -m dupefinder cli sort color /path/to/photos --method palette --n-colors 3
+python -m pixsieve cli sort color /path/to/photos --method palette --n-colors 3
 
 # Analyze color distribution without moving files
-python -m dupefinder cli sort color /path/to/photos --method analyze
+python -m pixsieve cli sort color /path/to/photos --method analyze
 
 # Copy instead of move
-python -m dupefinder cli sort color /path/to/photos --method dominant --copy --no-dry-run
+python -m pixsieve cli sort color /path/to/photos --method dominant --copy --no-dry-run
 ```
 
 **Options for `sort color`:**
@@ -171,8 +171,8 @@ python -m dupefinder cli sort color /path/to/photos --method dominant --copy --n
 Rename files whose extensions don't match their actual image format.
 
 ```bash
-python -m dupefinder cli fix-extensions /path/to/photos
-python -m dupefinder cli fix-extensions /path/to/photos --no-recursive --no-dry-run
+python -m pixsieve cli fix-extensions /path/to/photos
+python -m pixsieve cli fix-extensions /path/to/photos --no-recursive --no-dry-run
 ```
 
 | Option | Description |
@@ -187,8 +187,8 @@ python -m dupefinder cli fix-extensions /path/to/photos --no-recursive --no-dry-
 Convert PNG, BMP, and WEBP images to JPG.
 
 ```bash
-python -m dupefinder cli convert /path/to/photos --quality 90 --no-dry-run
-python -m dupefinder cli convert /path/to/photos --delete-originals --no-dry-run
+python -m pixsieve cli convert /path/to/photos --quality 90 --no-dry-run
+python -m pixsieve cli convert /path/to/photos --delete-originals --no-dry-run
 ```
 
 | Option | Description |
@@ -206,11 +206,11 @@ Two metadata operations: `randomize-exif` (EXIF dates) and `randomize-dates` (fi
 
 ```bash
 # Randomize EXIF date fields
-python -m dupefinder cli metadata randomize-exif /path/to/photos \
+python -m pixsieve cli metadata randomize-exif /path/to/photos \
   --start 2020-01-01 --end 2023-12-31 --no-dry-run
 
 # Randomize file system timestamps
-python -m dupefinder cli metadata randomize-dates /path/to/photos \
+python -m pixsieve cli metadata randomize-dates /path/to/photos \
   --start 2020-01-01 --end 2023-12-31 --no-dry-run
 ```
 
@@ -228,7 +228,7 @@ python -m dupefinder cli metadata randomize-dates /path/to/photos \
 Recursively delete all empty directories.
 
 ```bash
-python -m dupefinder cli cleanup /path/to/photos --no-dry-run
+python -m pixsieve cli cleanup /path/to/photos --no-dry-run
 ```
 
 ---
@@ -239,16 +239,16 @@ Chain multiple operations in a single command. Steps run sequentially.
 
 ```bash
 # Basic pipeline
-python -m dupefinder cli pipeline /path/to/photos \
+python -m pixsieve cli pipeline /path/to/photos \
   --steps "random_rename,convert_jpg,cleanup_empty" --no-dry-run
 
 # Pipeline including date operations
-python -m dupefinder cli pipeline /path/to/photos \
+python -m pixsieve cli pipeline /path/to/photos \
   --steps "random_rename,randomize_exif,randomize_dates,cleanup_empty" \
   --start 2020-01-01 --end 2023-12-31 --no-dry-run
 
 # Customize individual step settings
-python -m dupefinder cli pipeline /path/to/photos \
+python -m pixsieve cli pipeline /path/to/photos \
   --steps "random_rename,convert_jpg" \
   --length 16 --quality 90 --delete-originals --no-dry-run
 ```
@@ -272,10 +272,10 @@ python -m dupefinder cli pipeline /path/to/photos \
 
 ```bash
 # View current configuration
-python -m dupefinder config
+python -m pixsieve config
 
-# Create a config file at ~/.dupefinder/config.json
-python -m dupefinder config --init
+# Create a config file at ~/.pixsieve/config.json
+python -m pixsieve config --init
 ```
 
 Configuration supports environment variables > config file > defaults. Configurable settings include thresholds, workers, LSH settings, cache settings, and file paths.

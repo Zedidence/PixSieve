@@ -1,5 +1,5 @@
 """
-Flask routes for Duplicate Image Finder GUI.
+Flask routes for PixSieve GUI.
 
 Contains all API endpoints for the web interface.
 """

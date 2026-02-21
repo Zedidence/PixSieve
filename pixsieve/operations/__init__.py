@@ -1,5 +1,5 @@
 """
-Media file operations for DupeFinder.
+Media file operations for PixSieve.
 
 Provides comprehensive file management operations including:
 - File movement and organization

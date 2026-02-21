@@ -1,5 +1,5 @@
 """
-CLI package for the Duplicate Image Finder.
+CLI package for the PixSieve.
 
 Provides the command-line interface for scanning and managing duplicate images,
 with support for various actions (delete, move, hardlink, symlink), export

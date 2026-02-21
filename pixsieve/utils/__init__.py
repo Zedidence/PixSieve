@@ -1,5 +1,5 @@
 """
-Utilities package for the Duplicate Image Finder.
+Utilities package for the PixSieve.
 
 Provides:
 - formatters: Human-readable formatting for numbers, time, and file sizes

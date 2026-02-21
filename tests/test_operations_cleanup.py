@@ -1,11 +1,11 @@
 """
-Unit tests for dupefinder/operations/cleanup.py.
+Unit tests for pixsieve/operations/cleanup.py.
 """
 
 import pytest
 from pathlib import Path
 
-from dupefinder.operations.cleanup import delete_empty_folders
+from pixsieve.operations.cleanup import delete_empty_folders
 
 
 class TestDeleteEmptyFolders:

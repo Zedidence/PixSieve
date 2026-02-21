@@ -1,5 +1,5 @@
 """
-Formatting utilities for the Duplicate Image Finder.
+Formatting utilities for the PixSieve.
 
 Provides human-readable formatting for numbers, time estimates, and file sizes.
 """

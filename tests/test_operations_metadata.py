@@ -1,5 +1,5 @@
 """
-Unit tests for dupefinder/operations/metadata.py.
+Unit tests for pixsieve/operations/metadata.py.
 """
 
 import pytest
@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from PIL import Image
 
-from dupefinder.operations.metadata import (
+from pixsieve.operations.metadata import (
     random_date_in_range,
     randomize_exif_dates,
     randomize_file_dates,

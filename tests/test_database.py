@@ -6,8 +6,8 @@ import pytest
 import time
 import os
 from pathlib import Path
-from dupefinder.database import ImageCache, CacheStats
-from dupefinder.models import ImageInfo
+from pixsieve.database import ImageCache, CacheStats
+from pixsieve.models import ImageInfo
 
 
 class TestCacheStats:

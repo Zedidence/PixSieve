@@ -1,13 +1,13 @@
-# Contributing to DupeFinder
+# Contributing to PixSieve
 
-Thank you for considering contributing to DupeFinder! This document provides guidelines and instructions for contributing.
+Thank you for considering contributing to PixSieve! This document provides guidelines and instructions for contributing.
 
 ## Development Setup
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/Zedidence/DupeFinderGUI.git
-   cd DupeFinderGUI
+   git clone https://github.com/Zedidence/PixSieve.git
+   cd PixSieve
    ```
 
 2. **Create a virtual environment**
@@ -37,16 +37,16 @@ We use the following tools to maintain code quality:
 Run formatting and linting:
 ```bash
 # Format code
-black dupefinder/ tests/
+black pixsieve/ tests/
 
 # Check imports
-isort dupefinder/ tests/
+isort pixsieve/ tests/
 
 # Lint
-ruff check dupefinder/ tests/
+ruff check pixsieve/ tests/
 
 # Type check
-mypy dupefinder/ --ignore-missing-imports
+mypy pixsieve/ --ignore-missing-imports
 ```
 
 ## Testing
@@ -61,7 +61,7 @@ mypy dupefinder/ --ignore-missing-imports
 pytest
 
 # Run with coverage
-pytest --cov=dupefinder --cov-report=html
+pytest --cov=pixsieve --cov-report=html
 
 # Run specific test file
 pytest tests/test_scanner.py
@@ -104,7 +104,7 @@ pytest tests/test_scanner.py
 When reporting bugs, please include:
 
 - **OS and Python version**
-- **DupeFinder version**: `python -m dupefinder --version`
+- **PixSieve version**: `python -m pixsieve --version`
 - **Steps to reproduce** the issue
 - **Expected behavior**
 - **Actual behavior**
@@ -134,4 +134,4 @@ Feel free to:
 - Check existing issues and discussions
 - Review the README and documentation
 
-Thank you for contributing to DupeFinder!
+Thank you for contributing to PixSieve!

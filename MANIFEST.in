@@ -6,7 +6,7 @@ include LICENSE
 include requirements.txt
 
 # Include templates for web GUI
-recursive-include dupefinder/templates *.html
+recursive-include pixsieve/templates *.html
 
 # Include configuration examples
 include .github/copilot-instructions.md

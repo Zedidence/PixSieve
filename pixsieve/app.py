@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Duplicate Image Finder - GUI Application
+PixSieve - GUI Application
 ========================================
 A web-based interface for reviewing and managing duplicate images.
 
-Run with: python -m dupefinder.app
-Or: python dupefinder/app.py
+Run with: python -m pixsieve.app
+Or: python pixsieve/app.py
 
 Options:
     -q, --quiet     Quiet mode - suppress all output except errors
@@ -89,7 +89,7 @@ def main():
     """Main entry point for the GUI application."""
     # Parse command line arguments
     parser = argparse.ArgumentParser(
-        description='Duplicate Image Finder - GUI',
+        description='PixSieve - GUI',
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
@@ -131,7 +131,7 @@ def main():
     if log_level >= LOG_MINIMAL:
         print()
         print("  ╔══════════════════════════════════════╗")
-        print("  ║     DUPLICATE IMAGE FINDER - GUI     ║")
+        print("  ║            PIXSIEVE - GUI            ║")
         print("  ╚══════════════════════════════════════╝")
         print()
         

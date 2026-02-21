@@ -1,5 +1,5 @@
 """
-Selection strategy utilities for the Duplicate Image Finder.
+Selection strategy utilities for the PixSieve.
 
 Provides automatic selection strategies to determine which images to keep
 vs delete when duplicates are found.

@@ -1,5 +1,5 @@
 """
-SQLite database backend for Duplicate Image Finder.
+SQLite database backend for PixSieve.
 
 Provides persistent caching of image analysis results to enable:
 - Incremental re-scans (only analyze new/changed files)

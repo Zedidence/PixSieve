@@ -1,12 +1,12 @@
 """
-Unit tests for dupefinder/operations/rename.py.
+Unit tests for pixsieve/operations/rename.py.
 """
 
 import pytest
 from pathlib import Path
 from PIL import Image
 
-from dupefinder.operations.rename import rename_random, rename_by_parent
+from pixsieve.operations.rename import rename_random, rename_by_parent
 
 
 class TestRenameRandom:

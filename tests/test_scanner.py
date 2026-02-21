@@ -4,14 +4,14 @@ Unit tests for scanner module functions.
 
 import pytest
 from pathlib import Path
-from dupefinder.scanner import (
+from pixsieve.scanner import (
     find_image_files,
     calculate_file_hash,
     calculate_quality_score,
     analyze_image,
     find_exact_duplicates,
 )
-from dupefinder.models import ImageInfo
+from pixsieve.models import ImageInfo
 
 
 class TestFindImageFiles:

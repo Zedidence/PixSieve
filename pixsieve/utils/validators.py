@@ -1,5 +1,5 @@
 """
-Input validation and security checks for the Duplicate Image Finder.
+Input validation and security checks for the PixSieve.
 
 Provides validators for path traversal prevention, file accessibility,
 and scan parameter validation.

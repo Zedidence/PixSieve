@@ -1,5 +1,5 @@
 """
-Configuration constants for Duplicate Image Finder.
+Configuration constants for PixSieve.
 
 This module contains all configurable settings including:
 - Supported image extensions

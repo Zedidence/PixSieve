@@ -1,6 +1,6 @@
 # API Reference
 
-DupeFinder exposes a REST API for programmatic access and can also be used directly as a Python library.
+PixSieve exposes a REST API for programmatic access and can also be used directly as a Python library.
 
 **Base URL**: `http://localhost:5000` (default)
 
@@ -316,7 +316,7 @@ For detailed request/response schemas for each operation, see [operations.md](op
 ## Python Library API
 
 ```python
-from dupefinder import (
+from pixsieve import (
     find_image_files,
     analyze_image,
     analyze_images_parallel,
@@ -355,7 +355,7 @@ for group in exact_groups:
     print(f"Can save: {group.potential_savings_formatted}")
 
 # Direct LSH usage
-from dupefinder import HammingLSH, calculate_optimal_params
+from pixsieve import HammingLSH, calculate_optimal_params
 
 num_tables, bits_per_table = calculate_optimal_params(len(images), threshold=10)
 lsh = HammingLSH(num_tables=num_tables, bits_per_table=bits_per_table)

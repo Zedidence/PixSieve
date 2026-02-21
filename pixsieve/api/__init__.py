@@ -1,5 +1,5 @@
 """
-API package for the Duplicate Image Finder.
+API package for the PixSieve.
 
 Provides Flask routes and scan orchestration for the web interface,
 plus operations routes for media file management.

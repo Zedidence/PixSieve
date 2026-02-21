@@ -24,7 +24,7 @@ def prompt_for_directory() -> Path:
         - Validates directory exists and is a directory
     """
     print("\n" + "=" * 50)
-    print("  DUPLICATE IMAGE FINDER")
+    print("  PIXSIEVE")
     print("=" * 50)
 
     while True:

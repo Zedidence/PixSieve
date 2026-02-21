@@ -43,7 +43,7 @@
 - Added comprehensive test suite (100+ tests: models, scanner, LSH, database)
 - Added logging to all exception handlers
 - Batched progress callbacks (every 0.5 seconds) to reduce overhead
-- Added configuration file support (`~/.dupefinder/config.json`)
+- Added configuration file support (`~/.pixsieve/config.json`)
 - Prepared package for PyPI distribution (pyproject.toml, MANIFEST.in, LICENSE)
 - Created full REST API documentation
 

@@ -1,3 +1,3 @@
 """
-Test suite for Duplicate Image Finder.
+Test suite for PixSieve.
 """

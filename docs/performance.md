@@ -16,7 +16,7 @@ Covers LSH acceleration, caching, format support, and tuning options for large i
 
 ## HEIC/HEIF Support
 
-DupeFinder supports Apple's HEIC/HEIF formats through the `pillow-heif` library:
+PixSieve supports Apple's HEIC/HEIF formats through the `pillow-heif` library:
 
 ```bash
 pip install pillow-heif
@@ -29,7 +29,7 @@ If `pillow-heif` is not installed, HEIC/HEIF files are skipped with a warning. A
 To verify HEIC support is active:
 
 ```python
-from dupefinder import has_heif_support
+from pixsieve import has_heif_support
 print(has_heif_support())  # True if available
 ```
 
@@ -125,7 +125,7 @@ For a typical 50K image scan, these optimizations can save 2–5 minutes of proc
 
 ## Caching System
 
-DupeFinder uses SQLite to cache image analysis results, dramatically speeding up subsequent scans.
+PixSieve uses SQLite to cache image analysis results, dramatically speeding up subsequent scans.
 
 ### How It Works
 
@@ -183,4 +183,4 @@ Try lowering the threshold (e.g., `--threshold 5`) for stricter matching or rais
 LSH is probabilistic and may occasionally miss edge cases at exactly the threshold boundary. Use `--no-lsh` for brute-force comparison, or lower the threshold slightly.
 
 **HEIC files not being processed**
-Install HEIC support with `pip install pillow-heif`, then verify with `python -c "from dupefinder import has_heif_support; print(has_heif_support())"`.
+Install HEIC support with `pip install pillow-heif`, then verify with `python -c "from pixsieve import has_heif_support; print(has_heif_support())"`.

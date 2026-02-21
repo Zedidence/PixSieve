@@ -5,7 +5,7 @@ Unit tests for LSH (Locality-Sensitive Hashing) module.
 import pytest
 import imagehash
 from PIL import Image
-from dupefinder.lsh import HammingLSH, calculate_optimal_params, estimate_comparison_reduction
+from pixsieve.lsh import HammingLSH, calculate_optimal_params, estimate_comparison_reduction
 
 
 class TestHammingLSH:

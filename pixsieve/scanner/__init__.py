@@ -1,5 +1,5 @@
 """
-Scanner package for the Duplicate Image Finder.
+Scanner package for the PixSieve.
 
 Provides comprehensive image scanning, analysis, and duplicate detection
 functionality with support for exact and perceptual matching.

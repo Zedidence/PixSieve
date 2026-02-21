@@ -1,12 +1,12 @@
 """
-Unit tests for dupefinder/operations/sort.py.
+Unit tests for pixsieve/operations/sort.py.
 """
 
 import pytest
 from pathlib import Path
 from PIL import Image
 
-from dupefinder.operations.sort import sort_alphabetical, ColorImageSorter
+from pixsieve.operations.sort import sort_alphabetical, ColorImageSorter
 
 
 class TestSortAlphabetical:

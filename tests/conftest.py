@@ -83,7 +83,7 @@ def temp_cache_db(temp_dir):
 @pytest.fixture
 def mock_image_info():
     """Create a mock ImageInfo object for testing."""
-    from dupefinder.models import ImageInfo
+    from pixsieve.models import ImageInfo
 
     return ImageInfo(
         path="/test/image.jpg",
@@ -142,7 +142,7 @@ def ops_temp_dir(temp_dir):
 @pytest.fixture
 def flask_client():
     """Flask test client for API endpoint tests."""
-    from dupefinder.app import create_app, LOG_QUIET
+    from pixsieve.app import create_app, LOG_QUIET
 
     app = create_app(log_level=LOG_QUIET)
     app.config['TESTING'] = True

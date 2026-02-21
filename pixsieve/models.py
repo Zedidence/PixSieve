@@ -1,5 +1,5 @@
 """
-Data models for Duplicate Image Finder.
+Data models for PixSieve.
 
 Contains dataclasses for representing image metadata and duplicate groups.
 """

@@ -1,6 +1,6 @@
 # File Operations Reference
 
-Complete reference for all media file operations available in DupeFinder.
+Complete reference for all media file operations available in PixSieve.
 
 All operations are accessible via **CLI subcommands**, **Web GUI**, and **REST API**. Every operation defaults to **dry-run mode** for safety.
 
@@ -27,14 +27,14 @@ All operations are accessible via **CLI subcommands**, **Web GUI**, and **REST A
 
 Move all images from subdirectories into the parent folder, flattening the directory hierarchy.
 
-**Module:** `dupefinder.operations.move`
+**Module:** `pixsieve.operations.move`
 **Function:** `move_to_parent()`
 
 ### CLI
 
 ```bash
-python -m dupefinder cli move-to-parent /path/to/photos
-python -m dupefinder cli move-to-parent /path/to/photos --extensions .jpg .png --no-dry-run
+python -m pixsieve cli move-to-parent /path/to/photos
+python -m pixsieve cli move-to-parent /path/to/photos --extensions .jpg .png --no-dry-run
 ```
 
 | Option | Description |
@@ -79,14 +79,14 @@ POST /api/operations/move-to-parent
 
 Move files from source to destination while preserving the directory structure.
 
-**Module:** `dupefinder.operations.move`
+**Module:** `pixsieve.operations.move`
 **Function:** `move_with_structure()`
 
 ### CLI
 
 ```bash
-python -m dupefinder cli move /path/to/source /path/to/dest
-python -m dupefinder cli move /path/to/source /path/to/dest --overwrite --no-dry-run
+python -m pixsieve cli move /path/to/source /path/to/dest
+python -m pixsieve cli move /path/to/source /path/to/dest --overwrite --no-dry-run
 ```
 
 | Option | Description |
@@ -132,15 +132,15 @@ POST /api/operations/move
 
 Rename all matching files to random alphanumeric names using parallel processing.
 
-**Module:** `dupefinder.operations.rename`
+**Module:** `pixsieve.operations.rename`
 **Function:** `rename_random()`
 
 ### CLI
 
 ```bash
-python -m dupefinder cli rename random /path/to/photos
-python -m dupefinder cli rename random /path/to/photos --length 16 --workers 8 --no-dry-run
-python -m dupefinder cli rename random /path/to/photos --extensions .jpg .png --no-recursive
+python -m pixsieve cli rename random /path/to/photos
+python -m pixsieve cli rename random /path/to/photos --length 16 --workers 8 --no-dry-run
+python -m pixsieve cli rename random /path/to/photos --extensions .jpg .png --no-recursive
 ```
 
 | Option | Description |
@@ -191,14 +191,14 @@ POST /api/operations/rename/random
 
 Rename files based on parent and grandparent folder names, producing structured names like `ArtistA_AlbumX_1.jpg`.
 
-**Module:** `dupefinder.operations.rename`
+**Module:** `pixsieve.operations.rename`
 **Function:** `rename_by_parent()`
 
 ### CLI
 
 ```bash
-python -m dupefinder cli rename parent /path/to/photos
-python -m dupefinder cli rename parent /path/to/photos --no-dry-run
+python -m pixsieve cli rename parent /path/to/photos
+python -m pixsieve cli rename parent /path/to/photos --no-dry-run
 ```
 
 | Option | Description |
@@ -255,14 +255,14 @@ root_dir/
 
 Sort files into subfolders based on the first character of their filename.
 
-**Module:** `dupefinder.operations.sort`
+**Module:** `pixsieve.operations.sort`
 **Function:** `sort_alphabetical()`
 
 ### CLI
 
 ```bash
-python -m dupefinder cli sort alpha /path/to/photos
-python -m dupefinder cli sort alpha /path/to/photos --no-dry-run
+python -m pixsieve cli sort alpha /path/to/photos
+python -m pixsieve cli sort alpha /path/to/photos --no-dry-run
 ```
 
 | Option | Description |
@@ -314,7 +314,7 @@ POST /api/operations/sort/alpha
 
 Sort images by color properties using K-means clustering. Requires `scikit-learn`.
 
-**Module:** `dupefinder.operations.sort`
+**Module:** `pixsieve.operations.sort`
 **Class:** `ColorImageSorter`
 
 ### Methods
@@ -330,19 +330,19 @@ Sort images by color properties using K-means clustering. Requires `scikit-learn
 
 ```bash
 # Sort by dominant color
-python -m dupefinder cli sort color /path/to/photos --method dominant
+python -m pixsieve cli sort color /path/to/photos --method dominant
 
 # Classify as color vs black & white
-python -m dupefinder cli sort color /path/to/photos --method bw --no-dry-run
+python -m pixsieve cli sort color /path/to/photos --method bw --no-dry-run
 
 # Sort by color palette (3 colors)
-python -m dupefinder cli sort color /path/to/photos --method palette --n-colors 3
+python -m pixsieve cli sort color /path/to/photos --method palette --n-colors 3
 
 # Analyze color distribution (no moves)
-python -m dupefinder cli sort color /path/to/photos --method analyze
+python -m pixsieve cli sort color /path/to/photos --method analyze
 
 # Copy instead of move
-python -m dupefinder cli sort color /path/to/photos --method dominant --copy
+python -m pixsieve cli sort color /path/to/photos --method dominant --copy
 ```
 
 | Option | Description |
@@ -401,14 +401,14 @@ POST /api/operations/sort/color
 
 Scan images and fix file extensions that don't match the actual image format.
 
-**Module:** `dupefinder.operations.convert`
+**Module:** `pixsieve.operations.convert`
 **Function:** `fix_extensions()`
 
 ### CLI
 
 ```bash
-python -m dupefinder cli fix-extensions /path/to/photos
-python -m dupefinder cli fix-extensions /path/to/photos --no-recursive --no-dry-run
+python -m pixsieve cli fix-extensions /path/to/photos
+python -m pixsieve cli fix-extensions /path/to/photos --no-recursive --no-dry-run
 ```
 
 | Option | Description |
@@ -454,15 +454,15 @@ POST /api/operations/fix-extensions
 
 Convert PNG, BMP, and WEBP images to JPG format.
 
-**Module:** `dupefinder.operations.convert`
+**Module:** `pixsieve.operations.convert`
 **Function:** `batch_convert_to_jpg()`
 
 ### CLI
 
 ```bash
-python -m dupefinder cli convert /path/to/photos
-python -m dupefinder cli convert /path/to/photos --quality 90 --delete-originals --no-dry-run
-python -m dupefinder cli convert /path/to/photos --no-recursive
+python -m pixsieve cli convert /path/to/photos
+python -m pixsieve cli convert /path/to/photos --quality 90 --delete-originals --no-dry-run
+python -m pixsieve cli convert /path/to/photos --no-recursive
 ```
 
 | Option | Description |
@@ -512,15 +512,15 @@ POST /api/operations/convert
 
 Randomize EXIF date metadata (DateTimeOriginal, DateTimeDigitized, DateTime) for EXIF-compatible images.
 
-**Module:** `dupefinder.operations.metadata`
+**Module:** `pixsieve.operations.metadata`
 **Function:** `randomize_exif_dates()`
 
 ### CLI
 
 ```bash
-python -m dupefinder cli metadata randomize-exif /path/to/photos \
+python -m pixsieve cli metadata randomize-exif /path/to/photos \
   --start 2020-01-01 --end 2023-12-31
-python -m dupefinder cli metadata randomize-exif /path/to/photos \
+python -m pixsieve cli metadata randomize-exif /path/to/photos \
   --start 2020-01-01 --end 2023-12-31 --no-recursive --no-dry-run
 ```
 
@@ -570,15 +570,15 @@ POST /api/operations/metadata/randomize-exif
 
 Randomize file system timestamps (modification time, access time, and creation time on Windows).
 
-**Module:** `dupefinder.operations.metadata`
+**Module:** `pixsieve.operations.metadata`
 **Function:** `randomize_file_dates()`
 
 ### CLI
 
 ```bash
-python -m dupefinder cli metadata randomize-dates /path/to/photos \
+python -m pixsieve cli metadata randomize-dates /path/to/photos \
   --start 2020-01-01 --end 2023-12-31
-python -m dupefinder cli metadata randomize-dates /path/to/photos \
+python -m pixsieve cli metadata randomize-dates /path/to/photos \
   --start 2020-01-01 --end 2023-12-31 --no-recursive --no-dry-run
 ```
 
@@ -628,14 +628,14 @@ POST /api/operations/metadata/randomize-dates
 
 Recursively delete all empty directories under the target directory.
 
-**Module:** `dupefinder.operations.cleanup`
+**Module:** `pixsieve.operations.cleanup`
 **Function:** `delete_empty_folders()`
 
 ### CLI
 
 ```bash
-python -m dupefinder cli cleanup /path/to/photos
-python -m dupefinder cli cleanup /path/to/photos --no-dry-run
+python -m pixsieve cli cleanup /path/to/photos
+python -m pixsieve cli cleanup /path/to/photos --no-dry-run
 ```
 
 | Option | Description |
@@ -676,7 +676,7 @@ POST /api/operations/cleanup
 
 Chain multiple operations together in a single workflow. Steps execute in order.
 
-**Module:** `dupefinder.operations.pipeline`
+**Module:** `pixsieve.operations.pipeline`
 **Function:** `run_pipeline()`
 
 ### Available Steps
@@ -693,16 +693,16 @@ Chain multiple operations together in a single workflow. Steps execute in order.
 
 ```bash
 # Basic pipeline
-python -m dupefinder cli pipeline /path/to/photos \
+python -m pixsieve cli pipeline /path/to/photos \
   --steps "random_rename,convert_jpg,cleanup_empty"
 
 # Pipeline with date operations
-python -m dupefinder cli pipeline /path/to/photos \
+python -m pixsieve cli pipeline /path/to/photos \
   --steps "random_rename,randomize_exif,randomize_dates,cleanup_empty" \
   --start 2020-01-01 --end 2023-12-31 --no-dry-run
 
 # Customize rename and convert settings
-python -m dupefinder cli pipeline /path/to/photos \
+python -m pixsieve cli pipeline /path/to/photos \
   --steps "random_rename,convert_jpg" \
   --length 16 --quality 90 --delete-originals --no-dry-run
 ```
@@ -766,7 +766,7 @@ Returns a dictionary mapping step names to their individual result dictionaries:
 All operations can be used directly as a Python library:
 
 ```python
-from dupefinder.operations import (
+from pixsieve.operations import (
     delete_empty_folders,
     move_to_parent,
     move_with_structure,

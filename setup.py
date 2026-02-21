@@ -1,5 +1,5 @@
 """
-Setup script for Duplicate Image Finder package.
+Setup script for PixSieve package.
 
 Install with:
     pip install -e .
@@ -13,7 +13,7 @@ from pathlib import Path
 import re
 
 # Read version from __init__.py (single source of truth)
-init_path = Path(__file__).parent / "dupefinder" / "__init__.py"
+init_path = Path(__file__).parent / "pixsieve" / "__init__.py"
 with open(init_path, encoding="utf-8") as f:
     version_match = re.search(r'^__version__\s*=\s*[\'"]([^\'"]*)[\'"]', f.read(), re.MULTILINE)
     if not version_match:
@@ -27,17 +27,17 @@ if readme_path.exists():
     long_description = readme_path.read_text(encoding="utf-8")
 
 setup(
-    name="dupefinder",
+    name="pixsieve",
     version=version,  # Dynamically read from __init__.py (currently 2.1.0)
     author="Zach Daly",
     description="A comprehensive tool for finding duplicate and visually similar images",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/Zedidence/DupeFinderGUI.git",
+    url="https://github.com/Zedidence/PixSieve.git",
     packages=find_packages(),
     include_package_data=True,
     package_data={
-        "dupefinder": ["templates/*.html"],
+        "pixsieve": ["templates/*.html"],
     },
     python_requires=">=3.9",
     install_requires=[
@@ -58,9 +58,9 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "dupefinder=dupefinder.__main__:main",
-            "dupefinder-cli=dupefinder.cli:main",
-            "dupefinder-gui=dupefinder.app:main",
+            "pixsieve=pixsieve.__main__:main",
+            "pixsieve-cli=pixsieve.cli:main",
+            "pixsieve-gui=pixsieve.app:main",
         ],
     },
     classifiers=[
@@ -78,5 +78,5 @@ setup(
         "Topic :: Multimedia :: Graphics",
         "Topic :: Utilities",
     ],
-    keywords="duplicate image finder photo dedup hash perceptual heic",
+    keywords="PixSieve photo dedup hash perceptual heic",
 )
