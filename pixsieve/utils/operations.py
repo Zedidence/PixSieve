@@ -179,12 +179,28 @@ def find_files(
     return sorted(files)
 
 
+class _NoOpProgressBar:
+    """Fallback progress bar with no-op update/close when tqdm is unavailable."""
+
+    def __init__(self, iterable: Iterator[Any] | None, total: int | None) -> None:
+        self._iter = iterable if iterable is not None else range(total or 0)
+
+    def __iter__(self) -> Iterator[Any]:
+        return iter(self._iter)
+
+    def update(self, n: int = 1) -> None:  # noqa: ARG002
+        pass
+
+    def close(self) -> None:
+        pass
+
+
 def make_progress_bar(
     iterable: Iterator[Any] | None = None,
     total: int | None = None,
     desc: str = "Processing",
     unit: str = "file"
-) -> Iterator[Any]:
+) -> Any:
     """
     Create a tqdm progress bar with graceful fallback.
 
@@ -205,9 +221,9 @@ def make_progress_bar(
         from tqdm import tqdm
         return tqdm(iterable, total=total, desc=desc, unit=unit)
     except ImportError:
-        # Fallback to plain iterable if tqdm not available
+        # Fallback to no-op stub that supports .update()/.close() if tqdm not available
         logger.debug("tqdm not available, progress bars disabled")
-        return iterable if iterable is not None else range(total or 0)
+        return _NoOpProgressBar(iterable, total)
 
 
 def parse_date(date_str: str) -> datetime:
