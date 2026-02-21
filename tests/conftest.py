@@ -97,3 +97,54 @@ def mock_image_info():
         perceptual_hash="0123456789abcdef",
         quality_score=75.5
     )
+
+
+@pytest.fixture
+def ops_temp_dir(temp_dir):
+    """
+    Create a temp directory with subdirectory structure for operation tests.
+
+    Structure:
+        root/
+            alpha.jpg          (top-level JPEG)
+            beta.png           (top-level PNG)
+            sub1/
+                charlie.jpg    (nested JPEG)
+                delta.png      (nested PNG)
+            sub2/
+                echo.bmp       (nested BMP)
+            empty_dir/         (empty directory)
+    """
+    # Top-level images
+    img_jpg = Image.new('RGB', (50, 50), color='red')
+    img_jpg.save(temp_dir / "alpha.jpg", 'JPEG')
+
+    img_png = Image.new('RGB', (50, 50), color='blue')
+    img_png.save(temp_dir / "beta.png", 'PNG')
+
+    # sub1
+    sub1 = temp_dir / "sub1"
+    sub1.mkdir()
+    Image.new('RGB', (50, 50), color='green').save(sub1 / "charlie.jpg", 'JPEG')
+    Image.new('RGB', (50, 50), color='yellow').save(sub1 / "delta.png", 'PNG')
+
+    # sub2
+    sub2 = temp_dir / "sub2"
+    sub2.mkdir()
+    Image.new('RGB', (50, 50), color='purple').save(sub2 / "echo.bmp", 'BMP')
+
+    # empty directory
+    (temp_dir / "empty_dir").mkdir()
+
+    return temp_dir
+
+
+@pytest.fixture
+def flask_client():
+    """Flask test client for API endpoint tests."""
+    from dupefinder.app import create_app, LOG_QUIET
+
+    app = create_app(log_level=LOG_QUIET)
+    app.config['TESTING'] = True
+    with app.test_client() as client:
+        yield client

@@ -46,14 +46,14 @@ setup(
         "flask>=2.0.0",
         "numpy>=1.20.0",
         "pillow-heif>=0.10.0",  # HEIC/HEIF format support
+        "scikit-learn>=1.0.0",  # K-means clustering for color sorting
+        "piexif>=1.0.0",        # EXIF metadata manipulation
+        "tqdm>=4.0.0",          # Progress bars
     ],
     extras_require={
         "dev": [
             "pytest>=7.0.0",
             "pytest-cov>=4.0.0",
-        ],
-        "progress": [
-            "tqdm>=4.0.0",
         ],
     },
     entry_points={

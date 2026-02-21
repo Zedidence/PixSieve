@@ -79,3 +79,42 @@ HISTORY_FILE = os.path.join(os.path.expanduser('~'), '.duplicate_finder_history.
 # SQLite cache database location
 # Stores analyzed image metadata for faster re-scans
 CACHE_DB_FILE = os.path.join(os.path.expanduser('~'), '.duplicate_finder_cache.db')
+
+# =============================================================================
+# MediaManager Operations Configuration
+# =============================================================================
+
+# Alphabetical sort groups for file organization
+ALPHA_SORT_GROUPS = {
+    "A-G": list("ABCDEFG"),
+    "H-N": list("HIJKLMN"),
+    "O-T": list("OPQRST"),
+    "U-Z": list("UVWXYZ"),
+    "0-9": list("0123456789"),
+}
+
+# EXIF-compatible extensions (supports EXIF metadata)
+EXIF_EXTENSIONS = {'.jpg', '.jpeg', '.tiff', '.tif'}
+
+# Image formats convertible to JPG
+CONVERTIBLE_TO_JPG = {'.png', '.bmp', '.webp'}
+
+# PIL format to file extension mapping
+FORMAT_TO_EXT = {
+    "JPEG": {"preferred": ".jpg", "valid": [".jpg", ".jpeg"]},
+    "PNG":  {"preferred": ".png", "valid": [".png"]},
+    "GIF":  {"preferred": ".gif", "valid": [".gif"]},
+    "BMP":  {"preferred": ".bmp", "valid": [".bmp"]},
+    "TIFF": {"preferred": ".tiff", "valid": [".tif", ".tiff"]},
+    "WEBP": {"preferred": ".webp", "valid": [".webp"]},
+    "ICO":  {"preferred": ".ico", "valid": [".ico"]},
+    "HEIF": {"preferred": ".heic", "valid": [".heic"]},
+}
+
+# Windows-specific constraints
+WINDOWS_RESERVED_NAMES = (
+    ['CON', 'PRN', 'AUX', 'NUL']
+    + [f'COM{i}' for i in range(1, 10)]
+    + [f'LPT{i}' for i in range(1, 10)]
+)
+WINDOWS_MAX_PATH = 250

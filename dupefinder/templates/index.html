@@ -1127,6 +1127,289 @@
                 flex: 0 0 auto;
             }
         }
+        /* ===== Tab Navigation ===== */
+        .tab-nav {
+            display: flex;
+            gap: 0;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #333;
+        }
+
+        .tab-btn {
+            padding: 14px 28px;
+            border: none;
+            background: transparent;
+            color: #888;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.2s;
+        }
+
+        .tab-btn:hover {
+            color: #ccc;
+            background: rgba(255,255,255,0.03);
+        }
+
+        .tab-btn.active {
+            color: #4a9eff;
+            border-bottom-color: #4a9eff;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* ===== Operations Panel ===== */
+        .ops-grid {
+            display: grid;
+            grid-template-columns: 240px 1fr;
+            gap: 0;
+            background: #16213e;
+            border-radius: 12px;
+            overflow: hidden;
+            min-height: 500px;
+        }
+
+        .ops-sidebar {
+            background: #0f0f23;
+            border-right: 1px solid #333;
+            padding: 0;
+        }
+
+        .ops-sidebar-item {
+            padding: 14px 20px;
+            cursor: pointer;
+            border-bottom: 1px solid #222;
+            color: #888;
+            font-size: 0.9rem;
+            transition: all 0.15s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .ops-sidebar-item:hover {
+            background: #1a1a3e;
+            color: #ccc;
+        }
+
+        .ops-sidebar-item.active {
+            background: #16213e;
+            color: #4a9eff;
+            border-right: 3px solid #4a9eff;
+        }
+
+        .ops-sidebar-item .ops-icon {
+            font-size: 1.1rem;
+            width: 24px;
+            text-align: center;
+        }
+
+        .ops-main {
+            padding: 30px;
+        }
+
+        .ops-header {
+            margin-bottom: 24px;
+        }
+
+        .ops-header h3 {
+            font-size: 1.3rem;
+            color: #fff;
+            margin-bottom: 6px;
+        }
+
+        .ops-header p {
+            color: #888;
+            font-size: 0.9rem;
+        }
+
+        .ops-form {
+            display: none;
+        }
+
+        .ops-form.active {
+            display: block;
+        }
+
+        .ops-form .form-group {
+            margin-bottom: 18px;
+        }
+
+        .ops-actions {
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+            padding-top: 20px;
+            border-top: 1px solid #333;
+        }
+
+        .ops-result {
+            margin-top: 24px;
+            background: #0f0f23;
+            border-radius: 8px;
+            padding: 20px;
+            display: none;
+        }
+
+        .ops-result.active {
+            display: block;
+        }
+
+        .ops-result h4 {
+            color: #27ae60;
+            margin-bottom: 12px;
+            font-size: 1rem;
+        }
+
+        .ops-result.error h4 {
+            color: #e74c3c;
+        }
+
+        .ops-result-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            gap: 12px;
+        }
+
+        .ops-stat {
+            background: #1a1a2e;
+            border-radius: 6px;
+            padding: 12px;
+            text-align: center;
+        }
+
+        .ops-stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #4a9eff;
+        }
+
+        .ops-stat-label {
+            font-size: 0.8rem;
+            color: #888;
+            margin-top: 4px;
+        }
+
+        .ops-running {
+            display: none;
+            align-items: center;
+            gap: 12px;
+            padding: 16px 20px;
+            background: rgba(74, 158, 255, 0.1);
+            border: 1px solid rgba(74, 158, 255, 0.3);
+            border-radius: 8px;
+            margin-top: 16px;
+        }
+
+        .ops-running.active {
+            display: flex;
+        }
+
+        .ops-spinner {
+            width: 20px;
+            height: 20px;
+            border: 3px solid #333;
+            border-top-color: #4a9eff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .dry-run-toggle {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 16px;
+            background: rgba(243, 156, 18, 0.1);
+            border: 1px solid rgba(243, 156, 18, 0.3);
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .dry-run-toggle label {
+            color: #f39c12;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .dry-run-toggle small {
+            color: #888;
+            font-size: 0.8rem;
+        }
+
+        /* Pipeline checklist */
+        .pipeline-steps {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .pipeline-step-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 14px;
+            background: #0f0f23;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        .pipeline-step-item:hover {
+            background: #1a1a3e;
+        }
+
+        .pipeline-step-item input {
+            width: 16px;
+            height: 16px;
+        }
+
+        .pipeline-step-item label {
+            color: #ccc;
+            font-size: 0.9rem;
+            cursor: pointer;
+        }
+
+        @media (max-width: 768px) {
+            .ops-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .ops-sidebar {
+                display: flex;
+                overflow-x: auto;
+                border-right: none;
+                border-bottom: 1px solid #333;
+            }
+
+            .ops-sidebar-item {
+                white-space: nowrap;
+                border-bottom: none;
+                border-right: 1px solid #222;
+            }
+
+            .ops-sidebar-item.active {
+                border-right-color: #222;
+                border-bottom: 3px solid #4a9eff;
+            }
+
+            .pipeline-steps {
+                grid-template-columns: 1fr;
+            }
+        }
     </style>
 </head>
 <body>
@@ -1141,7 +1424,16 @@
             <h1>🔍 Duplicate Image Finder</h1>
             <p>Find and manage duplicate images with ease</p>
         </header>
-        
+
+        <!-- Tab Navigation -->
+        <div class="tab-nav">
+            <button class="tab-btn active" onclick="switchTab('duplicates')">Duplicate Finder</button>
+            <button class="tab-btn" onclick="switchTab('operations')">File Operations</button>
+        </div>
+
+        <!-- ==================== DUPLICATES TAB ==================== -->
+        <div class="tab-content active" id="tab-duplicates">
+
         <!-- Session Recovery Banner -->
         <div class="recovery-banner" id="recoveryBanner">
             <h3>📂 Previous Session Found</h3>
@@ -1448,8 +1740,366 @@
                 <button class="btn btn-danger" onclick="showDeleteModal()">🗑️ Move to Trash</button>
             </div>
         </div>
+
+        </div><!-- /tab-duplicates -->
+
+        <!-- ==================== OPERATIONS TAB ==================== -->
+        <div class="tab-content" id="tab-operations">
+            <div class="ops-grid">
+                <!-- Sidebar Navigation -->
+                <div class="ops-sidebar">
+                    <div class="ops-sidebar-item active" onclick="selectOperation('move-to-parent')">
+                        <span class="ops-icon">📂</span> Move to Parent
+                    </div>
+                    <div class="ops-sidebar-item" onclick="selectOperation('move')">
+                        <span class="ops-icon">📁</span> Move (Structured)
+                    </div>
+                    <div class="ops-sidebar-item" onclick="selectOperation('rename-random')">
+                        <span class="ops-icon">🔀</span> Rename Random
+                    </div>
+                    <div class="ops-sidebar-item" onclick="selectOperation('rename-parent')">
+                        <span class="ops-icon">🏷️</span> Rename by Parent
+                    </div>
+                    <div class="ops-sidebar-item" onclick="selectOperation('sort-alpha')">
+                        <span class="ops-icon">🔤</span> Sort Alphabetical
+                    </div>
+                    <div class="ops-sidebar-item" onclick="selectOperation('sort-color')">
+                        <span class="ops-icon">🎨</span> Sort by Color
+                    </div>
+                    <div class="ops-sidebar-item" onclick="selectOperation('fix-extensions')">
+                        <span class="ops-icon">🔧</span> Fix Extensions
+                    </div>
+                    <div class="ops-sidebar-item" onclick="selectOperation('convert')">
+                        <span class="ops-icon">🖼️</span> Convert to JPG
+                    </div>
+                    <div class="ops-sidebar-item" onclick="selectOperation('randomize-exif')">
+                        <span class="ops-icon">📅</span> Randomize EXIF
+                    </div>
+                    <div class="ops-sidebar-item" onclick="selectOperation('randomize-dates')">
+                        <span class="ops-icon">🕐</span> Randomize Dates
+                    </div>
+                    <div class="ops-sidebar-item" onclick="selectOperation('cleanup')">
+                        <span class="ops-icon">🧹</span> Cleanup Empty
+                    </div>
+                    <div class="ops-sidebar-item" onclick="selectOperation('pipeline')">
+                        <span class="ops-icon">⚡</span> Pipeline
+                    </div>
+                </div>
+
+                <!-- Main Content Area -->
+                <div class="ops-main">
+                    <!-- Dry Run Toggle (shared) -->
+                    <div class="dry-run-toggle">
+                        <label>
+                            <input type="checkbox" id="opsDryRun" checked>
+                            Dry Run Mode
+                        </label>
+                        <small>When enabled, no files will be modified. Uncheck to apply changes.</small>
+                    </div>
+
+                    <!-- Shared directory input -->
+                    <div class="form-group">
+                        <label for="opsDirectory">Target Directory</label>
+                        <input type="text" id="opsDirectory" placeholder="Enter full path (e.g., C:\Users\Photos)">
+                    </div>
+
+                    <!-- Running indicator -->
+                    <div class="ops-running" id="opsRunning">
+                        <div class="ops-spinner"></div>
+                        <span id="opsRunningText">Running operation...</span>
+                    </div>
+
+                    <!-- Result display -->
+                    <div class="ops-result" id="opsResult">
+                        <h4 id="opsResultTitle">Operation Complete</h4>
+                        <div class="ops-result-grid" id="opsResultGrid"></div>
+                    </div>
+
+                    <!-- ===== Move to Parent ===== -->
+                    <div class="ops-form active" id="ops-move-to-parent">
+                        <div class="ops-header">
+                            <h3>Move to Parent</h3>
+                            <p>Flatten directory hierarchy by moving all images from subdirectories into the parent folder.</p>
+                        </div>
+                        <div class="form-group">
+                            <label for="mtpExtensions">File Extensions (optional)</label>
+                            <input type="text" id="mtpExtensions" placeholder="e.g., .jpg .png .gif (leave empty for all image types)">
+                            <small>Space-separated list of extensions to include</small>
+                        </div>
+                        <div class="ops-actions">
+                            <button class="btn btn-primary" onclick="runOperation('move-to-parent')">Run Move to Parent</button>
+                        </div>
+                    </div>
+
+                    <!-- ===== Move (Structured) ===== -->
+                    <div class="ops-form" id="ops-move">
+                        <div class="ops-header">
+                            <h3>Move with Structure</h3>
+                            <p>Move files from source to destination while preserving the directory structure.</p>
+                        </div>
+                        <div class="form-group">
+                            <label for="moveDestination">Destination Directory</label>
+                            <input type="text" id="moveDestination" placeholder="Enter destination path">
+                        </div>
+                        <div class="form-group">
+                            <div class="checkbox-group">
+                                <label><input type="checkbox" id="moveOverwrite"> Overwrite existing files</label>
+                            </div>
+                        </div>
+                        <div class="ops-actions">
+                            <button class="btn btn-primary" onclick="runOperation('move')">Run Move</button>
+                        </div>
+                    </div>
+
+                    <!-- ===== Rename Random ===== -->
+                    <div class="ops-form" id="ops-rename-random">
+                        <div class="ops-header">
+                            <h3>Random Rename</h3>
+                            <p>Rename all matching files to random alphanumeric names. Uses parallel processing.</p>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="renameLength">Name Length</label>
+                                <input type="number" id="renameLength" value="12" min="4" max="64">
+                            </div>
+                            <div class="form-group">
+                                <label for="renameWorkers">Workers</label>
+                                <input type="number" id="renameWorkers" value="4" min="1" max="16">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <div class="checkbox-group">
+                                <label><input type="checkbox" id="renameRecursive" checked> Search subdirectories</label>
+                            </div>
+                        </div>
+                        <div class="ops-actions">
+                            <button class="btn btn-primary" onclick="runOperation('rename-random')">Run Random Rename</button>
+                        </div>
+                    </div>
+
+                    <!-- ===== Rename by Parent ===== -->
+                    <div class="ops-form" id="ops-rename-parent">
+                        <div class="ops-header">
+                            <h3>Rename by Parent Folder</h3>
+                            <p>Rename files based on parent and grandparent folder names. Produces names like FolderName_SubFolder_1.jpg.</p>
+                        </div>
+                        <div class="ops-actions">
+                            <button class="btn btn-primary" onclick="runOperation('rename-parent')">Run Parent Rename</button>
+                        </div>
+                    </div>
+
+                    <!-- ===== Sort Alphabetical ===== -->
+                    <div class="ops-form" id="ops-sort-alpha">
+                        <div class="ops-header">
+                            <h3>Alphabetical Sort</h3>
+                            <p>Sort files into subfolders based on first character: A-G, H-N, O-T, U-Z, 0-9.</p>
+                        </div>
+                        <div class="ops-actions">
+                            <button class="btn btn-primary" onclick="runOperation('sort-alpha')">Run Alphabetical Sort</button>
+                        </div>
+                    </div>
+
+                    <!-- ===== Sort by Color ===== -->
+                    <div class="ops-form" id="ops-sort-color">
+                        <div class="ops-header">
+                            <h3>Color Sort</h3>
+                            <p>Sort images by color using K-means clustering analysis.</p>
+                        </div>
+                        <div class="form-group">
+                            <label for="colorMethod">Sorting Method</label>
+                            <select id="colorMethod">
+                                <option value="dominant">Dominant Color</option>
+                                <option value="bw">Color vs Black &amp; White</option>
+                                <option value="palette">Color Palette</option>
+                                <option value="analyze">Analyze Only (no move)</option>
+                            </select>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="colorNColors">Palette Colors</label>
+                                <input type="number" id="colorNColors" value="3" min="2" max="10">
+                                <small>Number of colors for palette method</small>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <div class="checkbox-group">
+                                <label><input type="checkbox" id="colorCopy"> Copy files (instead of move)</label>
+                            </div>
+                        </div>
+                        <div class="ops-actions">
+                            <button class="btn btn-primary" onclick="runOperation('sort-color')">Run Color Sort</button>
+                        </div>
+                    </div>
+
+                    <!-- ===== Fix Extensions ===== -->
+                    <div class="ops-form" id="ops-fix-extensions">
+                        <div class="ops-header">
+                            <h3>Fix Extensions</h3>
+                            <p>Detect actual image format using PIL and fix incorrect file extensions.</p>
+                        </div>
+                        <div class="form-group">
+                            <div class="checkbox-group">
+                                <label><input type="checkbox" id="fixExtRecursive" checked> Search subdirectories</label>
+                            </div>
+                        </div>
+                        <div class="ops-actions">
+                            <button class="btn btn-primary" onclick="runOperation('fix-extensions')">Run Fix Extensions</button>
+                        </div>
+                    </div>
+
+                    <!-- ===== Convert to JPG ===== -->
+                    <div class="ops-form" id="ops-convert">
+                        <div class="ops-header">
+                            <h3>Convert to JPG</h3>
+                            <p>Convert PNG, BMP, and WEBP images to JPG format.</p>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="convertQuality">JPG Quality</label>
+                                <div class="range-container">
+                                    <input type="range" id="convertQuality" min="1" max="100" value="95" oninput="document.getElementById('convertQualityVal').textContent=this.value">
+                                    <span class="range-value" id="convertQualityVal">95</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <div class="checkbox-group">
+                                <label><input type="checkbox" id="convertDeleteOrig"> Delete originals after conversion</label>
+                                <label><input type="checkbox" id="convertRecursive" checked> Search subdirectories</label>
+                            </div>
+                        </div>
+                        <div class="ops-actions">
+                            <button class="btn btn-primary" onclick="runOperation('convert')">Run Convert</button>
+                        </div>
+                    </div>
+
+                    <!-- ===== Randomize EXIF ===== -->
+                    <div class="ops-form" id="ops-randomize-exif">
+                        <div class="ops-header">
+                            <h3>Randomize EXIF Dates</h3>
+                            <p>Set random EXIF date metadata (Date Taken) for EXIF-compatible images (JPG, TIFF).</p>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="exifStartDate">Start Date</label>
+                                <input type="date" id="exifStartDate" value="2020-01-01">
+                            </div>
+                            <div class="form-group">
+                                <label for="exifEndDate">End Date</label>
+                                <input type="date" id="exifEndDate" value="2025-12-31">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <div class="checkbox-group">
+                                <label><input type="checkbox" id="exifRecursive" checked> Search subdirectories</label>
+                            </div>
+                        </div>
+                        <div class="ops-actions">
+                            <button class="btn btn-primary" onclick="runOperation('randomize-exif')">Run Randomize EXIF</button>
+                        </div>
+                    </div>
+
+                    <!-- ===== Randomize File Dates ===== -->
+                    <div class="ops-form" id="ops-randomize-dates">
+                        <div class="ops-header">
+                            <h3>Randomize File Dates</h3>
+                            <p>Set random file system timestamps (modified, accessed, created on Windows).</p>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="datesStartDate">Start Date</label>
+                                <input type="date" id="datesStartDate" value="2020-01-01">
+                            </div>
+                            <div class="form-group">
+                                <label for="datesEndDate">End Date</label>
+                                <input type="date" id="datesEndDate" value="2025-12-31">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <div class="checkbox-group">
+                                <label><input type="checkbox" id="datesRecursive" checked> Search subdirectories</label>
+                            </div>
+                        </div>
+                        <div class="ops-actions">
+                            <button class="btn btn-primary" onclick="runOperation('randomize-dates')">Run Randomize Dates</button>
+                        </div>
+                    </div>
+
+                    <!-- ===== Cleanup ===== -->
+                    <div class="ops-form" id="ops-cleanup">
+                        <div class="ops-header">
+                            <h3>Delete Empty Folders</h3>
+                            <p>Recursively remove all empty directories under the target directory. The root itself is never deleted.</p>
+                        </div>
+                        <div class="ops-actions">
+                            <button class="btn btn-primary" onclick="runOperation('cleanup')">Run Cleanup</button>
+                        </div>
+                    </div>
+
+                    <!-- ===== Pipeline ===== -->
+                    <div class="ops-form" id="ops-pipeline">
+                        <div class="ops-header">
+                            <h3>Pipeline</h3>
+                            <p>Chain multiple operations together in sequence. Select the steps to run in order.</p>
+                        </div>
+                        <div class="form-group">
+                            <label>Select Steps</label>
+                            <div class="pipeline-steps">
+                                <div class="pipeline-step-item">
+                                    <input type="checkbox" id="pipeStep_random_rename" value="random_rename">
+                                    <label for="pipeStep_random_rename">Rename files to random names</label>
+                                </div>
+                                <div class="pipeline-step-item">
+                                    <input type="checkbox" id="pipeStep_convert_jpg" value="convert_jpg">
+                                    <label for="pipeStep_convert_jpg">Convert PNG/BMP/WEBP to JPG</label>
+                                </div>
+                                <div class="pipeline-step-item">
+                                    <input type="checkbox" id="pipeStep_randomize_exif" value="randomize_exif">
+                                    <label for="pipeStep_randomize_exif">Randomize EXIF dates</label>
+                                </div>
+                                <div class="pipeline-step-item">
+                                    <input type="checkbox" id="pipeStep_randomize_dates" value="randomize_dates">
+                                    <label for="pipeStep_randomize_dates">Randomize file system dates</label>
+                                </div>
+                                <div class="pipeline-step-item">
+                                    <input type="checkbox" id="pipeStep_cleanup_empty" value="cleanup_empty">
+                                    <label for="pipeStep_cleanup_empty">Delete empty folders</label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="pipeStartDate">Start Date (for date steps)</label>
+                                <input type="date" id="pipeStartDate" value="2020-01-01">
+                            </div>
+                            <div class="form-group">
+                                <label for="pipeEndDate">End Date (for date steps)</label>
+                                <input type="date" id="pipeEndDate" value="2025-12-31">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="pipeNameLength">Name Length</label>
+                                <input type="number" id="pipeNameLength" value="12" min="4" max="64">
+                                <small>For random rename step</small>
+                            </div>
+                            <div class="form-group">
+                                <label for="pipeQuality">JPG Quality</label>
+                                <input type="number" id="pipeQuality" value="95" min="1" max="100">
+                                <small>For convert step</small>
+                            </div>
+                        </div>
+                        <div class="ops-actions">
+                            <button class="btn btn-primary" onclick="runOperation('pipeline')">Run Pipeline</button>
+                        </div>
+                    </div>
+
+                </div><!-- /ops-main -->
+            </div><!-- /ops-grid -->
+        </div><!-- /tab-operations -->
+
     </div>
-    
+
     <!-- Undo Toast -->
     <div class="undo-toast" id="undoToast">
         <span id="undoMessage">Selection changed</span>
@@ -2551,6 +3201,292 @@
         function escapeJs(str) {
             if (!str) return '';
             return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        }
+
+        // =============================================================
+        // Tab Navigation
+        // =============================================================
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
+
+            document.getElementById('tab-' + tabName).classList.add('active');
+            // Activate the correct button
+            const buttons = document.querySelectorAll('.tab-btn');
+            if (tabName === 'duplicates') buttons[0].classList.add('active');
+            else buttons[1].classList.add('active');
+        }
+
+        // =============================================================
+        // Operations Module
+        // =============================================================
+        let opsPollingInterval = null;
+        let currentOperation = 'move-to-parent';
+
+        function selectOperation(opName) {
+            currentOperation = opName;
+
+            // Update sidebar active state
+            document.querySelectorAll('.ops-sidebar-item').forEach(item => item.classList.remove('active'));
+            event.currentTarget.classList.add('active');
+
+            // Show the corresponding form, hide others
+            document.querySelectorAll('.ops-form').forEach(f => f.classList.remove('active'));
+            const form = document.getElementById('ops-' + opName);
+            if (form) form.classList.add('active');
+
+            // Hide result and running indicator when switching
+            document.getElementById('opsResult').classList.remove('active');
+            document.getElementById('opsRunning').classList.remove('active');
+        }
+
+        function buildOperationPayload(opName) {
+            const directory = document.getElementById('opsDirectory').value.trim();
+            const dryRun = document.getElementById('opsDryRun').checked;
+
+            const payload = { directory, dryRun };
+
+            switch (opName) {
+                case 'move-to-parent': {
+                    const extInput = document.getElementById('mtpExtensions').value.trim();
+                    if (extInput) {
+                        payload.extensions = extInput.split(/\s+/);
+                    }
+                    break;
+                }
+                case 'move': {
+                    payload.destination = document.getElementById('moveDestination').value.trim();
+                    payload.overwrite = document.getElementById('moveOverwrite').checked;
+                    break;
+                }
+                case 'rename-random': {
+                    payload.nameLength = parseInt(document.getElementById('renameLength').value) || 12;
+                    payload.workers = parseInt(document.getElementById('renameWorkers').value) || 4;
+                    payload.recursive = document.getElementById('renameRecursive').checked;
+                    break;
+                }
+                case 'rename-parent':
+                    break;
+                case 'sort-alpha':
+                    break;
+                case 'sort-color': {
+                    payload.method = document.getElementById('colorMethod').value;
+                    payload.nColors = parseInt(document.getElementById('colorNColors').value) || 3;
+                    payload.copyFiles = document.getElementById('colorCopy').checked;
+                    break;
+                }
+                case 'fix-extensions': {
+                    payload.recursive = document.getElementById('fixExtRecursive').checked;
+                    break;
+                }
+                case 'convert': {
+                    payload.quality = parseInt(document.getElementById('convertQuality').value) || 95;
+                    payload.deleteOriginals = document.getElementById('convertDeleteOrig').checked;
+                    payload.recursive = document.getElementById('convertRecursive').checked;
+                    break;
+                }
+                case 'randomize-exif': {
+                    payload.startDate = document.getElementById('exifStartDate').value;
+                    payload.endDate = document.getElementById('exifEndDate').value;
+                    payload.recursive = document.getElementById('exifRecursive').checked;
+                    break;
+                }
+                case 'randomize-dates': {
+                    payload.startDate = document.getElementById('datesStartDate').value;
+                    payload.endDate = document.getElementById('datesEndDate').value;
+                    payload.recursive = document.getElementById('datesRecursive').checked;
+                    break;
+                }
+                case 'cleanup':
+                    break;
+                case 'pipeline': {
+                    const steps = [];
+                    document.querySelectorAll('.pipeline-steps input[type="checkbox"]:checked').forEach(cb => {
+                        steps.push(cb.value);
+                    });
+                    payload.steps = steps;
+                    payload.startDate = document.getElementById('pipeStartDate').value;
+                    payload.endDate = document.getElementById('pipeEndDate').value;
+                    payload.nameLength = parseInt(document.getElementById('pipeNameLength').value) || 12;
+                    payload.jpgQuality = parseInt(document.getElementById('pipeQuality').value) || 95;
+                    break;
+                }
+            }
+            return payload;
+        }
+
+        function getEndpointForOperation(opName) {
+            const endpoints = {
+                'move-to-parent': '/api/operations/move-to-parent',
+                'move': '/api/operations/move',
+                'rename-random': '/api/operations/rename/random',
+                'rename-parent': '/api/operations/rename/parent',
+                'sort-alpha': '/api/operations/sort/alpha',
+                'sort-color': '/api/operations/sort/color',
+                'fix-extensions': '/api/operations/fix-extensions',
+                'convert': '/api/operations/convert',
+                'randomize-exif': '/api/operations/metadata/randomize-exif',
+                'randomize-dates': '/api/operations/metadata/randomize-dates',
+                'cleanup': '/api/operations/cleanup',
+                'pipeline': '/api/operations/pipeline',
+            };
+            return endpoints[opName];
+        }
+
+        function runOperation(opName) {
+            const payload = buildOperationPayload(opName);
+
+            if (!payload.directory) {
+                alert('Please enter a target directory.');
+                return;
+            }
+
+            if (opName === 'move' && !payload.destination) {
+                alert('Please enter a destination directory.');
+                return;
+            }
+
+            if (opName === 'pipeline' && (!payload.steps || payload.steps.length === 0)) {
+                alert('Please select at least one pipeline step.');
+                return;
+            }
+
+            // Confirmation for non-dry-run
+            if (!payload.dryRun) {
+                if (!confirm('Dry Run is OFF. Files WILL be modified. Continue?')) {
+                    return;
+                }
+            }
+
+            const endpoint = getEndpointForOperation(opName);
+
+            // Show running state
+            document.getElementById('opsResult').classList.remove('active');
+            document.getElementById('opsRunning').classList.add('active');
+            document.getElementById('opsRunningText').textContent = 'Starting ' + opName + '...';
+
+            // Disable run buttons
+            document.querySelectorAll('.ops-actions .btn').forEach(btn => btn.disabled = true);
+
+            fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    showOpsError(data.error);
+                    return;
+                }
+                // Start polling for results
+                document.getElementById('opsRunningText').textContent = 'Running ' + opName + '...';
+                startOpsPolling();
+            })
+            .catch(err => {
+                showOpsError('Failed to start operation: ' + err);
+            });
+        }
+
+        function startOpsPolling() {
+            if (opsPollingInterval) clearInterval(opsPollingInterval);
+            opsPollingInterval = setInterval(checkOpsStatus, 500);
+        }
+
+        function checkOpsStatus() {
+            fetch('/api/operations/status')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status === 'complete') {
+                        clearInterval(opsPollingInterval);
+                        opsPollingInterval = null;
+                        document.getElementById('opsRunning').classList.remove('active');
+                        document.querySelectorAll('.ops-actions .btn').forEach(btn => btn.disabled = false);
+                        showOpsResult(data.result, data.operation);
+                    } else if (data.status === 'error') {
+                        clearInterval(opsPollingInterval);
+                        opsPollingInterval = null;
+                        showOpsError(data.error || 'Operation failed');
+                    }
+                })
+                .catch(() => {});
+        }
+
+        function showOpsResult(result, operationName) {
+            const resultDiv = document.getElementById('opsResult');
+            const titleEl = document.getElementById('opsResultTitle');
+            const gridEl = document.getElementById('opsResultGrid');
+
+            resultDiv.classList.remove('error');
+            resultDiv.classList.add('active');
+
+            const dryTag = document.getElementById('opsDryRun').checked ? ' (Dry Run)' : '';
+            titleEl.textContent = 'Operation Complete: ' + (operationName || '') + dryTag;
+
+            gridEl.innerHTML = '';
+
+            if (!result) {
+                gridEl.innerHTML = '<div class="ops-stat"><div class="ops-stat-value">--</div><div class="ops-stat-label">No data</div></div>';
+                return;
+            }
+
+            // Handle pipeline results (nested dicts)
+            if (typeof result === 'object' && !Array.isArray(result)) {
+                // Check if it's a pipeline result (values are objects)
+                const firstVal = Object.values(result)[0];
+                if (firstVal && typeof firstVal === 'object' && !Array.isArray(firstVal)) {
+                    // Pipeline: show each step
+                    for (const [stepName, stepResult] of Object.entries(result)) {
+                        const stepHeader = document.createElement('div');
+                        stepHeader.style.cssText = 'grid-column: 1 / -1; color: #4a9eff; font-weight: 600; margin-top: 12px; padding-bottom: 4px; border-bottom: 1px solid #333;';
+                        stepHeader.textContent = stepName;
+                        gridEl.appendChild(stepHeader);
+
+                        for (const [key, value] of Object.entries(stepResult)) {
+                            gridEl.appendChild(createStatCard(key, value));
+                        }
+                    }
+                    return;
+                }
+
+                // Flat result dict
+                for (const [key, value] of Object.entries(result)) {
+                    if (typeof value === 'object' && !Array.isArray(value)) {
+                        // Nested object (e.g., distribution)
+                        const subHeader = document.createElement('div');
+                        subHeader.style.cssText = 'grid-column: 1 / -1; color: #888; font-weight: 600; margin-top: 8px;';
+                        subHeader.textContent = key;
+                        gridEl.appendChild(subHeader);
+                        for (const [k, v] of Object.entries(value)) {
+                            gridEl.appendChild(createStatCard(k, v));
+                        }
+                    } else if (Array.isArray(value)) {
+                        gridEl.appendChild(createStatCard(key, value.length + ' items'));
+                    } else {
+                        gridEl.appendChild(createStatCard(key, value));
+                    }
+                }
+            }
+        }
+
+        function createStatCard(label, value) {
+            const card = document.createElement('div');
+            card.className = 'ops-stat';
+            card.innerHTML = `<div class="ops-stat-value">${escapeHtml(String(value))}</div><div class="ops-stat-label">${escapeHtml(label)}</div>`;
+            return card;
+        }
+
+        function showOpsError(message) {
+            document.getElementById('opsRunning').classList.remove('active');
+            document.querySelectorAll('.ops-actions .btn').forEach(btn => btn.disabled = false);
+
+            const resultDiv = document.getElementById('opsResult');
+            const titleEl = document.getElementById('opsResultTitle');
+            const gridEl = document.getElementById('opsResultGrid');
+
+            resultDiv.classList.add('active', 'error');
+            titleEl.textContent = 'Error';
+            gridEl.innerHTML = '<div style="grid-column: 1/-1; color: #e74c3c; padding: 10px;">' + escapeHtml(message) + '</div>';
         }
     </script>
 </body>

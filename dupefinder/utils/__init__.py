@@ -7,6 +7,7 @@ Provides:
 - selection: Selection strategies for duplicate handling
 - platform: Platform-specific capability checks
 - exporters: Export duplicate results to files
+- operations: Shared utilities for media operations
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from . import validators
 from . import selection
 from . import platform
 from . import exporters
+from . import operations
 
 # Export commonly used functions and classes
 from .formatters import format_number, format_time_estimate, format_size
@@ -30,6 +32,14 @@ from .validators import (
 from .selection import SelectionStrategy, apply_selection_strategy
 from .platform import is_windows_admin, check_hardlink_support, check_symlink_support
 from .exporters import export_results
+from .operations import (
+    get_unique_path,
+    sanitize_filename,
+    truncate_path,
+    find_files,
+    make_progress_bar,
+    parse_date,
+)
 
 __all__ = [
     # Submodules
@@ -38,6 +48,7 @@ __all__ = [
     'selection',
     'platform',
     'exporters',
+    'operations',
     # Formatters
     'format_number',
     'format_time_estimate',
@@ -57,4 +68,11 @@ __all__ = [
     'check_symlink_support',
     # Exporters
     'export_results',
+    # Operations
+    'get_unique_path',
+    'sanitize_filename',
+    'truncate_path',
+    'find_files',
+    'make_progress_bar',
+    'parse_date',
 ]

@@ -26,7 +26,7 @@ import logging
 
 from flask import Flask
 
-from .api import api
+from .api import api, operations_bp
 from .state import scan_state
 
 
@@ -61,7 +61,8 @@ def create_app(log_level: int = LOG_MINIMAL) -> Flask:
     
     # Register routes
     app.register_blueprint(api)
-    
+    app.register_blueprint(operations_bp)
+
     return app
 
 

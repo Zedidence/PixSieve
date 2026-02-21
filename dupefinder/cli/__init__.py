@@ -2,12 +2,13 @@
 CLI package for the Duplicate Image Finder.
 
 Provides the command-line interface for scanning and managing duplicate images,
-with support for various actions (delete, move, hardlink, symlink) and export
-formats.
+with support for various actions (delete, move, hardlink, symlink), export
+formats, and media file operations (rename, sort, convert, metadata, etc.).
 
 Public API:
 - main: Entry point for CLI execution
 - CLIOrchestrator: CLI workflow orchestration class
+- OperationsOrchestrator: Media operations orchestration class
 - handle_duplicates: Function to execute actions on duplicates
 - print_duplicate_report: Function to display results report
 """
@@ -15,6 +16,7 @@ Public API:
 from __future__ import annotations
 
 from .orchestrator import CLIOrchestrator, setup_logging
+from .operations_orchestrator import OperationsOrchestrator
 from .arg_parser import create_parser, parse_arguments
 from .actions import handle_duplicates
 from .reporting import print_duplicate_report
@@ -44,6 +46,7 @@ __all__ = [
     'main',
     # Core classes
     'CLIOrchestrator',
+    'OperationsOrchestrator',
     # Utilities
     'setup_logging',
     'create_parser',

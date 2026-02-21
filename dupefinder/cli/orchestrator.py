@@ -2,7 +2,8 @@
 CLI workflow orchestration for the Duplicate Image Finder.
 
 Provides the CLIOrchestrator class that coordinates the entire CLI scanning
-workflow from argument parsing through final reporting.
+workflow from argument parsing through final reporting, and routes operations
+commands to the OperationsOrchestrator.
 """
 
 from __future__ import annotations
@@ -24,6 +25,15 @@ from .arg_parser import parse_arguments
 from .interactive import prompt_for_directory, confirm_action
 from .reporting import print_duplicate_report
 from .actions import handle_duplicates
+from .operations_orchestrator import OperationsOrchestrator
+
+
+# Commands that are handled by the OperationsOrchestrator
+OPERATIONS_COMMANDS = {
+    'move-to-parent', 'move', 'rename', 'sort',
+    'fix-extensions', 'convert', 'metadata',
+    'cleanup', 'pipeline',
+}
 
 
 def setup_logging(verbose: bool = False) -> logging.Logger:
@@ -50,7 +60,8 @@ class CLIOrchestrator:
     Orchestrates the CLI scanning workflow.
 
     Manages the complete lifecycle from argument parsing through duplicate
-    detection, reporting, and action execution.
+    detection, reporting, and action execution. Also routes operations
+    commands to the OperationsOrchestrator.
     """
 
     def __init__(self):
@@ -68,9 +79,28 @@ class CLIOrchestrator:
 
         Returns:
             Exit code (0 for success, 1 for error)
+        """
+        # Phase 1: Setup
+        exit_code = self._setup_phase()
+        if exit_code != 0:
+            return exit_code
+
+        # Route: if command is an operation, delegate to OperationsOrchestrator
+        if self.args.command in OPERATIONS_COMMANDS:
+            ops = OperationsOrchestrator(self.args, self.logger)
+            return ops.run()
+
+        # Otherwise, run the duplicate detection workflow
+        return self._run_duplicates_workflow()
+
+    def _run_duplicates_workflow(self) -> int:
+        """
+        Execute the duplicate detection workflow (original behavior).
+
+        Returns:
+            Exit code (0 for success, 1 for error)
 
         Workflow phases:
-        1. Setup & argument parsing
         2. Interactive prompts (if needed)
         3. Validation
         4. Configuration
@@ -79,11 +109,6 @@ class CLIOrchestrator:
         7. Duplicate detection & reporting
         8. Action execution & cleanup
         """
-        # Phase 1: Setup
-        exit_code = self._setup_phase()
-        if exit_code != 0:
-            return exit_code
-
         # Phase 2: Interactive prompts
         exit_code = self._interactive_phase()
         if exit_code != 0:
@@ -125,7 +150,7 @@ class CLIOrchestrator:
             0 for success, non-zero for error
         """
         self.args = parse_arguments()
-        self.logger = setup_logging(self.args.verbose)
+        self.logger = setup_logging(getattr(self.args, 'verbose', False))
         return 0
 
     def _interactive_phase(self) -> int:
