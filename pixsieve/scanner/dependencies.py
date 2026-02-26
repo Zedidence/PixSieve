@@ -38,10 +38,10 @@ except ImportError:
         "Install with: pip install pillow-heif"
     )
 
-# Increase PIL's decompression bomb limit for large images
-# Default is ~89MP (178 million pixels), we increase to 500MP for photo management
-# This handles legitimate large images like high-resolution scans and panoramas
-Image.MAX_IMAGE_PIXELS = 500_000_000  # 500 megapixels
+# C3: Configurable decompression bomb limit (via config or PIXSIEVE_MAX_IMAGE_PIXELS env var)
+# Default is ~89MP; raised to handle large scans, panoramas, and aerial imagery.
+from ..config import MAX_IMAGE_PIXELS as _MAX_IMAGE_PIXELS
+Image.MAX_IMAGE_PIXELS = _MAX_IMAGE_PIXELS
 
 # Suppress specific PIL warnings that we handle gracefully
 # - DecompressionBombWarning: We've increased the limit appropriately

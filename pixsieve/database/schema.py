@@ -91,9 +91,13 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_images_file_hash
         ON images(file_hash)
     """)
+    # F4: extended prefix index — 16 hex chars (64 bits) instead of 8 (32 bits)
+    # for better selectivity on phash queries. Drop the old 8-char index if it
+    # exists so it is replaced non-destructively (no schema version bump needed).
+    conn.execute("DROP INDEX IF EXISTS idx_images_phash_prefix")
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_images_phash_prefix
-        ON images(substr(perceptual_hash, 1, 8))
+        ON images(substr(perceptual_hash, 1, 16))
     """)
 
     # Scan history for tracking directories
@@ -106,6 +110,13 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
             created_at REAL DEFAULT (strftime('%s', 'now'))
         )
     """)
+
+    # G1: add dominant_color column non-destructively (ALTER TABLE is safe on
+    # existing databases; silently ignored if the column already exists).
+    try:
+        conn.execute("ALTER TABLE images ADD COLUMN dominant_color TEXT")
+    except Exception:
+        pass  # Column already exists in this database
 
     # Update schema version
     conn.execute("""

@@ -4,6 +4,7 @@ File sorting operations.
 Provides sorting strategies:
 - Alphabetical grouping (A-G, H-N, etc.)
 - Color-based sorting using K-means clustering
+- Resolution-based sorting with orientation sub-folders
 """
 
 from __future__ import annotations
@@ -13,12 +14,14 @@ import shutil
 import logging
 import warnings
 from pathlib import Path
+from typing import Callable
 
 from PIL import Image
 import numpy as np
 
 from ..config import IMAGE_EXTENSIONS, ALPHA_SORT_GROUPS
 from ..utils import get_unique_path, make_progress_bar
+from ..database import get_cache
 
 logger = logging.getLogger(__name__)
 
@@ -117,17 +120,22 @@ class ColorImageSorter:
     - Color palette signatures (multiple colors)
     """
 
-    def __init__(self, source_dir: str | Path = "."):
+    def __init__(self, source_dir: str | Path = ".", use_cache: bool = True):
         """
         Initialize sorter.
 
         Args:
             source_dir: Directory containing images to sort
+            use_cache: G1 - if True, look up / store dominant colors in the
+                image analysis cache, avoiding repeated K-means computation
+                across sort runs.
         """
         self.source_dir = Path(source_dir)
         self.supported = {
             '.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.webp',
         }
+        # G1: lazy cache reference — avoids import-time side effects
+        self._cache = get_cache() if use_cache else None
 
     def get_image_files(self) -> list[Path]:
         """
@@ -149,6 +157,10 @@ class ColorImageSorter:
         """
         Extract dominant color(s) using K-means clustering.
 
+        G1: For single-color lookups, checks the image analysis cache first.
+        On cache miss, computes via K-means and stores the result back so
+        subsequent sort runs avoid re-opening and re-analyzing every image.
+
         Args:
             image_path: Path to image file
             n_colors: Number of dominant colors to extract (default: 1)
@@ -161,6 +173,16 @@ class ColorImageSorter:
             - Resizes image to 150x150 for performance
             - Uses scikit-learn K-means clustering
         """
+        # G1: single-color fast path through DB cache
+        if n_colors == 1 and self._cache is not None:
+            cached_info = self._cache.get(str(image_path))
+            if cached_info is not None and cached_info.dominant_color:
+                try:
+                    parts = cached_info.dominant_color.split(',')
+                    return (int(parts[0]), int(parts[1]), int(parts[2]))
+                except Exception:
+                    pass  # malformed value — fall through to recompute
+
         try:
             from sklearn.cluster import KMeans
         except ImportError as exc:
@@ -177,7 +199,15 @@ class ColorImageSorter:
                 kmeans.fit(pixels)
                 colors = kmeans.cluster_centers_.astype(int)
                 if n_colors == 1:
-                    return tuple(colors[0])
+                    color = tuple(colors[0])
+                    # G1: persist to cache so next sort run is instant
+                    if self._cache is not None:
+                        color_str = f"{color[0]},{color[1]},{color[2]}"
+                        try:
+                            self._cache.set_dominant_color(str(image_path), color_str)
+                        except Exception:
+                            pass  # cache write failure is non-fatal
+                    return color
                 return [tuple(c) for c in colors]
         except Exception as exc:
             logger.error(f"Error processing {image_path}: {exc}")
@@ -450,4 +480,147 @@ class ColorImageSorter:
         }
 
 
-__all__ = ['sort_alphabetical', 'ColorImageSorter']
+# ---------------------------------------------------------------------------
+# Resolution sort
+# ---------------------------------------------------------------------------
+
+# Resolution categories: (name, min_px_inclusive, max_px_exclusive)
+# Category is determined by the longer edge of the image.
+_RESOLUTION_CATEGORIES = [
+    ('8k_plus',   7680, float('inf')),
+    ('4k',        3840, 7680),
+    ('2k',        2560, 3840),
+    ('hd',        1920, 2560),
+    ('large',     1280, 1920),
+    ('medium',     640, 1280),
+    ('small',      300,  640),
+    ('thumbnail',  100,  300),
+    ('tiny',         0,  100),
+]
+
+
+def _get_resolution_category(width: int, height: int) -> str:
+    """Return the resolution category name based on the longer edge."""
+    max_dim = max(width, height)
+    for name, lo, hi in _RESOLUTION_CATEGORIES:
+        if lo <= max_dim < hi:
+            return name
+    return 'unknown'
+
+
+def _get_orientation(width: int, height: int) -> str:
+    """Return 'landscape', 'portrait', or 'square'."""
+    if height == 0:
+        return 'landscape'
+    ratio = width / height
+    if 0.95 <= ratio <= 1.05:
+        return 'square'
+    return 'landscape' if width > height else 'portrait'
+
+
+def sort_by_resolution(
+    directory: str | Path,
+    copy_files: bool = False,
+    dry_run: bool = False,
+    on_progress: Callable[[int, str], None] | None = None,
+) -> dict:
+    """
+    Sort images into subfolders by resolution category and orientation.
+
+    Creates a ``sorted_by_resolution/`` folder inside *directory* with the
+    structure: ``<category>/<orientation>/<filename>``.
+
+    Resolution categories (based on the longer edge):
+        tiny       : < 100 px
+        thumbnail  : 100–299 px
+        small      : 300–639 px
+        medium     : 640–1279 px
+        large      : 1280–1919 px
+        hd         : 1920–2559 px  (1080p+)
+        2k         : 2560–3839 px
+        4k         : 3840–7679 px
+        8k_plus    : 7680 px+
+
+    Orientation sub-folders:
+        landscape  : width > height  (ratio > 1.05)
+        portrait   : height > width  (ratio < 0.95)
+        square     : roughly 1:1     (0.95 ≤ ratio ≤ 1.05)
+
+    Args:
+        directory: Directory whose top-level images will be sorted.
+        copy_files: Copy files instead of moving them (default: False).
+        dry_run: Report what would happen without modifying files (default: False).
+        on_progress: Optional callback ``(percent: int, message: str) -> None``
+            called during processing to relay progress to callers.
+
+    Returns:
+        Dictionary with keys:
+            - processed: files successfully moved/copied
+            - skipped:   files that could not be read
+            - errors:    files that failed during move/copy
+            - by_category: dict mapping ``"<category>/<orientation>"`` to file count
+    """
+    source_dir = Path(directory).resolve()
+
+    image_files = [
+        p for p in source_dir.iterdir()
+        if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
+    ]
+
+    total = len(image_files)
+    stats: dict = {'processed': 0, 'skipped': 0, 'errors': 0}
+    category_stats: dict[str, int] = {}
+
+    base = source_dir / 'sorted_by_resolution'
+    if not dry_run:
+        base.mkdir(exist_ok=True)
+
+    for i, fp in enumerate(make_progress_bar(image_files, desc="Sorting by resolution"), 1):
+        if on_progress and total > 0:
+            pct = int((i - 1) / total * 100)
+            on_progress(pct, f"Processing {i}/{total}: {fp.name}")
+
+        try:
+            with Image.open(fp) as img:
+                width, height = img.size
+        except Exception as exc:
+            logger.warning(f"Cannot read {fp.name}: {exc}")
+            stats['skipped'] += 1
+            continue
+
+        category = _get_resolution_category(width, height)
+        orientation = _get_orientation(width, height)
+
+        dest_folder = base / category / orientation
+        folder_key = f"{category}/{orientation}"
+
+        if not dry_run:
+            dest_folder.mkdir(parents=True, exist_ok=True)
+
+        dest = get_unique_path(dest_folder, fp.name)
+
+        if dry_run:
+            logger.info(f"[DRY RUN] {fp.name} ({width}x{height}) -> {folder_key}/")
+            category_stats[folder_key] = category_stats.get(folder_key, 0) + 1
+            stats['processed'] += 1
+            continue
+
+        try:
+            if copy_files:
+                shutil.copy2(fp, dest)
+            else:
+                shutil.move(str(fp), str(dest))
+            logger.info(f"{fp.name} -> {folder_key}/")
+            category_stats[folder_key] = category_stats.get(folder_key, 0) + 1
+            stats['processed'] += 1
+        except Exception as exc:
+            logger.error(f"Error moving {fp.name}: {exc}")
+            stats['errors'] += 1
+
+    if on_progress:
+        on_progress(100, f"Complete — {stats['processed']} files processed")
+
+    return {**stats, 'by_category': category_stats}
+
+
+__all__ = ['sort_alphabetical', 'ColorImageSorter', 'sort_by_resolution']

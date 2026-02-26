@@ -60,25 +60,44 @@ class MaintenanceOperations:
         """
         Remove cache entries for files that no longer exist.
 
+        F3: Processes the images table in cursor-based chunks instead of loading
+        all paths into memory at once — saves 100-500 MB for large caches.
+
         Returns:
             Number of entries removed
         """
         try:
-            with self.conn_mgr.connection(exclusive=True) as conn:
-                # Get all paths
-                rows = conn.execute("SELECT path FROM images").fetchall()
+            removed = 0
+            last_id = 0
+
+            while True:
+                # Read a chunk of (id, path) rows starting after last processed id
+                with self.conn_mgr.connection(exclusive=False) as conn:
+                    rows = conn.execute(
+                        "SELECT id, path FROM images WHERE id > ? ORDER BY id LIMIT ?",
+                        (last_id, CHUNK_SIZE),
+                    ).fetchall()
+
+                if not rows:
+                    break
+
                 missing = [row['path'] for row in rows if not os.path.exists(row['path'])]
 
-                # Delete in chunks to avoid SQLite variable limit
-                for i in range(0, len(missing), CHUNK_SIZE):
-                    chunk = missing[i:i + CHUNK_SIZE]
-                    placeholders = ','.join('?' * len(chunk))
-                    conn.execute(
-                        f"DELETE FROM images WHERE path IN ({placeholders})",
-                        chunk
-                    )
+                if missing:
+                    with self.conn_mgr.connection(exclusive=True) as conn:
+                        placeholders = ','.join('?' * len(missing))
+                        conn.execute(
+                            f"DELETE FROM images WHERE path IN ({placeholders})",
+                            missing,
+                        )
+                    removed += len(missing)
 
-                return len(missing)
+                last_id = rows[-1]['id']
+
+                if len(rows) < CHUNK_SIZE:
+                    break
+
+            return removed
         except Exception as e:
             logger.warning(f"Failed to cleanup missing cache entries: {e}")
             return 0

@@ -17,6 +17,18 @@ from ..models import ImageInfo
 from .dependencies import Image, imagehash, _logger
 
 
+def _ensure_phash_mode(img):
+    """
+    C1: Shared helper — ensure image is in a mode suitable for perceptual hashing.
+
+    Returns the image (possibly a new converted object) in RGB or L mode.
+    Raises on conversion failure so the caller can handle the error.
+    """
+    if img.mode not in ('RGB', 'L'):
+        img = img.convert('RGB')
+    return img
+
+
 def calculate_file_hash(filepath: str | Path, algorithm: str = 'sha256') -> str:
     """
     Calculate cryptographic hash of a file.
@@ -57,14 +69,12 @@ def calculate_perceptual_hash(filepath: str | Path, hash_size: int = 16) -> Opti
             # FIXED #6: Verify image can be loaded before accessing attributes
             img.load()  # Force load to detect truncated/corrupt images early
 
-            # Convert to RGB if necessary (handles transparency, etc.)
-            if img.mode not in ('RGB', 'L'):
-                try:
-                    img = img.convert('RGB')
-                except Exception as conv_err:
-                    # FIXED #4: Log conversion failures instead of silent None
-                    _logger.debug(f"Image mode conversion failed for {filepath} (mode={img.mode}): {conv_err}")
-                    return None
+            # C1: Use shared helper to convert to a phash-compatible mode
+            try:
+                img = _ensure_phash_mode(img)
+            except Exception as conv_err:
+                _logger.debug(f"Image mode conversion failed for {filepath} (mode={img.mode}): {conv_err}")
+                return None
 
             phash = imagehash.phash(img, hash_size=hash_size)
             return str(phash)

@@ -76,6 +76,12 @@ def row_to_imageinfo(row: sqlite3.Row) -> ImageInfo:
     Returns:
         ImageInfo object
     """
+    # G1: dominant_color may not exist on older DB rows (before migration)
+    try:
+        dominant_color = row['dominant_color']
+    except (IndexError, KeyError):
+        dominant_color = None
+
     return ImageInfo(
         path=row['path'],
         file_size=row['file_size'],
@@ -87,6 +93,7 @@ def row_to_imageinfo(row: sqlite3.Row) -> ImageInfo:
         file_hash=row['file_hash'] or "",
         perceptual_hash=row['perceptual_hash'] or "",
         quality_score=row['quality_score'] or 0.0,
+        dominant_color=dominant_color,
         error=row['error'],
     )
 

@@ -8,13 +8,23 @@ Union-Find data structures and optional LSH acceleration.
 from __future__ import annotations
 
 import logging
+import time
 from collections import defaultdict
+from functools import lru_cache
 from typing import Optional, Callable, Any
 
 from ..config import LSH_AUTO_THRESHOLD
 from ..lsh import HammingLSH, calculate_optimal_params, estimate_comparison_reduction
 from ..models import ImageInfo, DuplicateGroup
 from .dependencies import imagehash, HAS_TQDM, _tqdm_class
+
+
+# B2: LRU cache for parsed perceptual hashes — avoids re-parsing the same hex
+# string on repeated runs or across both brute-force and LSH code paths.
+@lru_cache(maxsize=None)
+def _parse_phash(hex_str: str):
+    """Parse a hex perceptual hash string to an imagehash object (cached)."""
+    return imagehash.hex_to_hash(hex_str)
 
 
 def find_exact_duplicates(
@@ -129,16 +139,18 @@ def _find_perceptual_duplicates_bruteforce(
 
     Best for small collections (< 5000 images).
     """
-    # Parse perceptual hashes
+    # B2: Use cached hash parser
     parsed_hashes = []
     for img in candidates:
         try:
-            parsed_hashes.append(imagehash.hex_to_hash(img.perceptual_hash))
+            parsed_hashes.append(_parse_phash(img.perceptual_hash))
         except Exception:
             parsed_hashes.append(None)
 
     # Union-Find for efficient grouping
     parent = list(range(len(candidates)))
+    # B1: union-by-rank to keep tree height O(log n)
+    rank = [0] * len(candidates)
 
     def find(x: int) -> int:
         if parent[x] != x:
@@ -148,7 +160,14 @@ def _find_perceptual_duplicates_bruteforce(
     def union(x: int, y: int) -> None:
         px, py = find(x), find(y)
         if px != py:
-            parent[px] = py
+            # B1: union by rank
+            if rank[px] < rank[py]:
+                parent[px] = py
+            elif rank[px] > rank[py]:
+                parent[py] = px
+            else:
+                parent[py] = px
+                rank[px] += 1
 
     # Compare all pairs O(n^2)
     total_comparisons = (len(candidates) * (len(candidates) - 1)) // 2
@@ -157,24 +176,47 @@ def _find_perceptual_duplicates_bruteforce(
     if HAS_TQDM and show_progress and total_comparisons > 1000 and _tqdm_class is not None:
         pbar = _tqdm_class(total=total_comparisons, desc="Comparing images", unit="cmp", ncols=80)
 
+    # B3: time-based progress throttling (0.5 s) instead of fixed-count
+    last_pbar_time = time.monotonic()
+    last_callback_time = time.monotonic()
+    pbar_pending = 0
+    _THROTTLE_S = 0.5
+
     comparison_count = 0
     for i in range(len(candidates)):
         for j in range(i + 1, len(candidates)):
             if parsed_hashes[i] is not None and parsed_hashes[j] is not None:
-                # Hamming distance
                 distance = parsed_hashes[i] - parsed_hashes[j]
-
                 if distance <= threshold:
                     union(i, j)
 
             comparison_count += 1
-            if pbar is not None and comparison_count % 1000 == 0:
-                pbar.update(1000)
-            if progress_callback and comparison_count % 10000 == 0:
-                progress_callback(comparison_count, total_comparisons)
+            pbar_pending += 1
 
+            # B3: throttle tqdm updates
+            if pbar is not None:
+                now = time.monotonic()
+                if now - last_pbar_time >= _THROTTLE_S:
+                    pbar.update(pbar_pending)
+                    pbar_pending = 0
+                    last_pbar_time = now
+
+            # B3: throttle progress_callback updates
+            if progress_callback:
+                now = time.monotonic()
+                if now - last_callback_time >= _THROTTLE_S:
+                    progress_callback(comparison_count, total_comparisons)
+                    last_callback_time = now
+
+    # Flush remaining pbar updates
     if pbar is not None:
+        if pbar_pending > 0:
+            pbar.update(pbar_pending)
         pbar.close()
+
+    # Final callback
+    if progress_callback:
+        progress_callback(comparison_count, total_comparisons)
 
     # Collect groups
     return _collect_duplicate_groups(candidates, parent, start_id)
@@ -196,11 +238,11 @@ def _find_perceptual_duplicates_lsh(
     """
     n = len(candidates)
 
-    # Parse perceptual hashes
+    # B2: Use cached hash parser
     parsed_hashes = []
     for img in candidates:
         try:
-            parsed_hashes.append(imagehash.hex_to_hash(img.perceptual_hash))
+            parsed_hashes.append(_parse_phash(img.perceptual_hash))
         except Exception:
             parsed_hashes.append(None)
 
@@ -266,24 +308,40 @@ def _find_perceptual_duplicates_lsh(
             f"(~{estimated_reduction:.1%} reduction)"
         )
 
+    # A1: use LSH-level deduplication for moderate-sized collections to reduce
+    # redundant Union-Find lookups. For very large collections (>500K), the seen
+    # set itself becomes too large; rely on the Union-Find skip instead.
+    lsh_deduplicate = n <= 500_000
+
     # Compare only LSH candidates using memory-efficient iterator
-    # The iterator may yield duplicate pairs across tables, but we skip pairs
-    # that are already in the same Union-Find group for efficiency
     pbar: Optional[Any] = None
     if HAS_TQDM and show_progress and estimated_candidates > 1000 and _tqdm_class is not None:
         pbar = _tqdm_class(total=estimated_candidates, desc="Comparing candidates", unit="cmp", ncols=80)
+
+    # B3: time-based progress throttling
+    last_pbar_time = time.monotonic()
+    last_callback_time = time.monotonic()
+    pbar_pending = 0
+    _THROTTLE_S = 0.5
 
     comparison_count = 0
     actual_comparisons = 0
     matches_found = 0
 
-    for i, j in lsh.iter_candidate_pairs():
+    for i, j in lsh.iter_candidate_pairs(deduplicate=lsh_deduplicate):
         comparison_count += 1
+        pbar_pending += 1
 
-        # Skip if already in the same group (handles duplicates across tables)
+        # Skip if already in the same group (handles table-collision duplicates
+        # when lsh_deduplicate=False, and provides a safety net otherwise)
         if find(i) == find(j):
-            if pbar is not None and comparison_count % 1000 == 0:
-                pbar.update(1000)
+            # B3: still throttle pbar for skipped pairs
+            if pbar is not None:
+                now = time.monotonic()
+                if now - last_pbar_time >= _THROTTLE_S:
+                    pbar.update(pbar_pending)
+                    pbar_pending = 0
+                    last_pbar_time = now
             continue
 
         if parsed_hashes[i] is not None and parsed_hashes[j] is not None:
@@ -294,23 +352,35 @@ def _find_perceptual_duplicates_lsh(
                 union(i, j)
                 matches_found += 1
 
-        if pbar is not None and comparison_count % 1000 == 0:
-            pbar.update(1000)
-        if progress_callback and comparison_count % 10000 == 0:
-            # Report progress relative to candidate pairs, not brute force
-            progress_callback(comparison_count, estimated_candidates)
+        # B3: throttle tqdm updates
+        if pbar is not None:
+            now = time.monotonic()
+            if now - last_pbar_time >= _THROTTLE_S:
+                pbar.update(pbar_pending)
+                pbar_pending = 0
+                last_pbar_time = now
+
+        # B3: throttle progress_callback updates
+        if progress_callback:
+            now = time.monotonic()
+            if now - last_callback_time >= _THROTTLE_S:
+                progress_callback(comparison_count, estimated_candidates)
+                last_callback_time = now
 
     if pbar is not None:
-        # Update remaining
-        remaining = comparison_count % 1000
-        if remaining > 0:
-            pbar.update(remaining)
+        if pbar_pending > 0:
+            pbar.update(pbar_pending)
         pbar.close()
+
+    # Final callback
+    if progress_callback:
+        progress_callback(comparison_count, estimated_candidates)
 
     if logger:
         logger.info(
             f"Found {matches_found:,} matching pairs "
-            f"({actual_comparisons:,} actual comparisons, {comparison_count - actual_comparisons:,} skipped as already grouped)"
+            f"({actual_comparisons:,} actual comparisons, "
+            f"{comparison_count - actual_comparisons:,} skipped as already grouped)"
         )
 
     # Collect groups

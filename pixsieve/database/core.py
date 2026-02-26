@@ -79,6 +79,18 @@ class ImageCache:
         """Remove all cached entries for files in a directory."""
         self._operations.invalidate_directory(directory)
 
+    def set_dominant_color(self, filepath: str, color_str: str) -> bool:
+        """G1: Update the dominant_color field for a cached image."""
+        return self._operations.set_dominant_color(filepath, color_str)
+
+    def put_async(self, info: ImageInfo) -> None:
+        """I1: Non-blocking cache write via background writer."""
+        self._operations.put_async(info)
+
+    def flush_writes(self) -> None:
+        """I1/F1: Block until all pending background writes have been committed."""
+        self._conn_mgr.flush_writes()
+
     # Delegate to MaintenanceOperations
     def cleanup_stale(self, max_age_days: int = 30) -> int:
         """Remove cache entries that haven't been accessed recently."""

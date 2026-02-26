@@ -12,6 +12,8 @@ import os
 import random
 import logging
 import platform
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -106,6 +108,7 @@ def randomize_exif_dates(
     end_date: datetime,
     recursive: bool = True,
     dry_run: bool = False,
+    max_workers: int = 4,
 ) -> dict[str, int]:
     """
     Randomize EXIF date metadata for all EXIF-compatible images.
@@ -116,6 +119,8 @@ def randomize_exif_dates(
         end_date: End of random date range
         recursive: Search subdirectories (default: True)
         dry_run: If True, only report what would be changed (default: False)
+        max_workers: G3 - parallel workers for EXIF writes (default: 4).
+            Set to 1 to disable parallelism.
 
     Returns:
         Dictionary with statistics:
@@ -136,6 +141,7 @@ def randomize_exif_dates(
     """
     files = find_files(Path(directory), EXIF_EXTENSIONS, recursive)
     stats = {'success': 0, 'failed': 0}
+    lock = threading.Lock()
 
     if not files:
         logger.info("No EXIF-compatible images found")
@@ -143,19 +149,39 @@ def randomize_exif_dates(
 
     logger.info(f"Found {len(files)} EXIF-compatible image(s)")
 
-    for f in make_progress_bar(files, desc="Randomizing EXIF dates"):
-        rand_date = random_date_in_range(start_date, end_date)
-
-        if dry_run:
+    if dry_run:
+        for f in make_progress_bar(files, desc="Randomizing EXIF dates"):
+            rand_date = random_date_in_range(start_date, end_date)
             logger.info(f"[DRY RUN] {f.name} -> {rand_date}")
             stats['success'] += 1
-            continue
+        return stats
 
-        if set_exif_dates(f, rand_date):
+    # G3: Pre-assign random dates so each file gets a deterministic date
+    # even when tasks execute out of order.
+    file_dates = [(f, random_date_in_range(start_date, end_date)) for f in files]
+
+    def _process(f: Path, rand_date: datetime) -> bool:
+        result = set_exif_dates(f, rand_date)
+        if result:
             logger.info(f"{f.name} -> {rand_date}")
-            stats['success'] += 1
-        else:
-            stats['failed'] += 1
+        return result
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_process, f, d): f
+            for f, d in file_dates
+        }
+        for future in make_progress_bar(
+            as_completed(futures),
+            desc="Randomizing EXIF dates",
+            total=len(futures),
+        ):
+            ok = future.result()
+            with lock:
+                if ok:
+                    stats['success'] += 1
+                else:
+                    stats['failed'] += 1
 
     return stats
 

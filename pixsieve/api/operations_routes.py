@@ -8,14 +8,16 @@ from the web GUI. Each endpoint validates inputs, runs the operation
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, Response
 
 from ..operations import (
     delete_empty_folders,
@@ -28,9 +30,12 @@ from ..operations import (
     randomize_exif_dates,
     randomize_file_dates,
     sort_alphabetical,
+    sort_by_resolution,
     ColorImageSorter,
     run_pipeline,
     AVAILABLE_STEPS,
+    scan_and_repair,
+    RepairStatus,
 )
 
 # Blueprint for operations routes
@@ -41,12 +46,21 @@ _logger = logging.getLogger(__name__)
 
 # Background operation state
 _operation_state = {
-    'status': 'idle',       # idle | running | complete | error
-    'operation': None,      # Name of current operation
-    'result': None,         # Result dict from operation
-    'error': None,          # Error message if failed
+    'status': 'idle',           # idle | running | complete | error
+    'operation': None,          # Name of current operation
+    'result': None,             # Result dict from operation
+    'error': None,              # Error message if failed
+    'progress': None,           # 0-100 integer or None (indeterminate)
+    'progress_text': '',        # Human-readable progress description
 }
 _operation_lock = threading.Lock()
+
+
+def _update_progress(pct: int | None, text: str = '') -> None:
+    """Update the shared progress state from inside an operation worker."""
+    with _operation_lock:
+        _operation_state['progress'] = pct
+        _operation_state['progress_text'] = text
 
 
 def _validate_directory(directory: str) -> tuple[bool, str | None]:
@@ -83,12 +97,15 @@ def _run_operation(name: str, func, *args, **kwargs):
             _operation_state['operation'] = name
             _operation_state['result'] = None
             _operation_state['error'] = None
+            _operation_state['progress'] = None
+            _operation_state['progress_text'] = ''
 
         try:
             result = func(*args, **kwargs)
             with _operation_lock:
                 _operation_state['status'] = 'complete'
                 _operation_state['result'] = result
+                _operation_state['progress'] = 100
         except Exception as exc:
             _logger.exception(f"Operation '{name}' failed: {exc}")
             with _operation_lock:
@@ -123,7 +140,47 @@ def operations_status():
             'operation': _operation_state['operation'],
             'result': _make_serializable(_operation_state['result']),
             'error': _operation_state['error'],
+            'progress': _operation_state['progress'],
+            'progress_text': _operation_state['progress_text'],
         })
+
+
+@operations_bp.route('/api/operations/stream')
+def stream_status():
+    """
+    Server-Sent Events endpoint for real-time operation progress.
+
+    Replaces the 1-second polling loop in the frontend with a push-based
+    stream. The connection is closed automatically when the operation reaches
+    a terminal state (complete, error, or idle).
+
+    Keep the existing /api/operations/status endpoint for the initial
+    page-load state check and for clients that do not support SSE.
+    """
+    def generate():
+        while True:
+            with _operation_lock:
+                state = {
+                    'status': _operation_state['status'],
+                    'operation': _operation_state['operation'],
+                    'result': _make_serializable(_operation_state['result']),
+                    'error': _operation_state['error'],
+                    'progress': _operation_state['progress'],
+                    'progress_text': _operation_state['progress_text'],
+                }
+            yield f"data: {json.dumps(state)}\n\n"
+            if state['status'] in ('complete', 'error', 'idle'):
+                break
+            time.sleep(0.5)
+
+    return Response(
+        generate(),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+        },
+    )
 
 
 @operations_bp.route('/api/operations/available')
@@ -321,6 +378,31 @@ def api_sort_color():
     return jsonify({'status': 'started', 'operation': f'sort-color-{method}'})
 
 
+@operations_bp.route('/api/operations/sort/resolution', methods=['POST'])
+def api_sort_resolution():
+    """Sort images by resolution category and orientation into sub-folders."""
+    data = request.json or {}
+    directory = data.get('directory', '').strip()
+
+    valid, error = _validate_directory(directory)
+    if not valid:
+        return jsonify({'error': error}), 400
+
+    dry_run = data.get('dryRun', True)
+    copy_files = data.get('copyFiles', False)
+
+    def _with_progress():
+        return sort_by_resolution(
+            directory,
+            copy_files=copy_files,
+            dry_run=dry_run,
+            on_progress=_update_progress,
+        )
+
+    _run_operation('sort-resolution', _with_progress)
+    return jsonify({'status': 'started', 'operation': 'sort-resolution'})
+
+
 # =============================================================================
 # Convert operations
 # =============================================================================
@@ -515,6 +597,12 @@ def api_pipeline():
         if start_date >= end_date:
             return jsonify({'error': 'Start date must be before end date'}), 400
 
+    # trash_dir is required when repair_corrupt step is included
+    trash_dir = data.get('trashDir', '').strip() or None
+    if 'repair_corrupt' in steps and not trash_dir:
+        from ..config import DEFAULT_TRASH_DIR
+        trash_dir = DEFAULT_TRASH_DIR
+
     _run_operation(
         'pipeline',
         run_pipeline,
@@ -527,5 +615,61 @@ def api_pipeline():
         delete_originals=data.get('deleteOriginals', False),
         recursive=data.get('recursive', True),
         dry_run=dry_run,
+        trash_dir=trash_dir,
     )
     return jsonify({'status': 'started', 'operation': 'pipeline'})
+
+
+# =============================================================================
+# Repair operations
+# =============================================================================
+
+@operations_bp.route('/api/operations/repair', methods=['POST'])
+def api_repair():
+    """Scan for corrupt images, attempt repair, quarantine unfixable files."""
+    data = request.json or {}
+    directory = data.get('directory', '').strip()
+
+    valid, error = _validate_directory(directory)
+    if not valid:
+        return jsonify({'error': error}), 400
+
+    trash_folder = data.get('trashFolder', '').strip()
+    if not trash_folder:
+        return jsonify({'error': 'Trash folder path is required'}), 400
+    if not os.path.isabs(trash_folder):
+        return jsonify({'error': 'Trash folder must be an absolute path'}), 400
+
+    dry_run = data.get('dryRun', True)
+    attempt_repair = data.get('attemptRepair', True)
+    quarantine_unfixable = data.get('quarantineUnfixable', True)
+    workers = max(1, min(data.get('workers', 4), 16))
+
+    def _repair_and_serialize():
+        result = scan_and_repair(
+            directory,
+            trash_folder=trash_folder,
+            attempt_repair=attempt_repair,
+            quarantine_unfixable=quarantine_unfixable,
+            dry_run=dry_run,
+            max_workers=workers,
+        )
+        # Serialize RepairResult objects and separate problem files from stats
+        problems = [
+            r.to_dict()
+            for r in result.get('results', [])
+            if r.status != RepairStatus.CLEAN
+        ]
+        return {
+            'checked': result['checked'],
+            'clean': result['clean'],
+            'repaired': result['repaired'],
+            'quarantined': result['quarantined'],
+            'permission_errors': result['permission_errors'],
+            'skipped': result['skipped'],
+            'errors': result['errors'],
+            'problems': problems,
+        }
+
+    _run_operation('repair', _repair_and_serialize)
+    return jsonify({'status': 'started', 'operation': 'repair'})

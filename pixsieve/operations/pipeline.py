@@ -14,6 +14,7 @@ from .rename import rename_random
 from .convert import batch_convert_to_jpg
 from .metadata import randomize_exif_dates, randomize_file_dates
 from .cleanup import delete_empty_folders
+from .repair import scan_and_repair
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,10 @@ AVAILABLE_STEPS = {
         'label': 'Delete empty folders',
         'func': 'cleanup_empty',
     },
+    'repair_corrupt': {
+        'label': 'Scan and repair corrupt images',
+        'func': 'repair_corrupt',
+    },
 }
 
 
@@ -52,6 +57,7 @@ def run_pipeline(
     delete_originals: bool = False,
     recursive: bool = True,
     dry_run: bool = False,
+    trash_dir: str | None = None,
 ) -> dict[str, dict]:
     """
     Execute a sequence of operations on directory.
@@ -66,6 +72,8 @@ def run_pipeline(
         delete_originals: Delete originals after conversion (default: False)
         recursive: Process subdirectories (default: True)
         dry_run: Only report, don't modify files (default: False)
+        trash_dir: Destination folder for quarantined corrupt images.
+            Required when 'repair_corrupt' is included in steps.
 
     Returns:
         Dictionary mapping step names to their result dictionaries
@@ -76,9 +84,16 @@ def run_pipeline(
         >>> results = run_pipeline('/photos', steps, dry_run=True)
         >>> print(results['random_rename'])
 
+        >>> # With corrupt image repair:
+        >>> results = run_pipeline(
+        ...     '/photos', ['repair_corrupt'],
+        ...     trash_dir='/photos/.trash', dry_run=True,
+        ... )
+
     Notes:
         - Steps are executed in order
         - Date steps (randomize_exif, randomize_dates) require start_date and end_date
+        - repair_corrupt step requires trash_dir
         - Unknown steps will cause pipeline to abort
         - Each step's results are printed during execution
     """
@@ -102,6 +117,12 @@ def run_pipeline(
         if start_date >= end_date:
             logger.error("start_date must be before end_date")
             return {}
+
+    # Check repair requirements
+    if 'repair_corrupt' in steps and trash_dir is None:
+        from ..config import DEFAULT_TRASH_DIR
+        trash_dir = DEFAULT_TRASH_DIR
+        logger.info(f"trash_dir not specified; defaulting to {trash_dir}")
 
     results: dict[str, dict] = {}
     total = len(steps)
@@ -148,6 +169,16 @@ def run_pipeline(
 
         elif step == 'cleanup_empty':
             results[step] = delete_empty_folders(directory, dry_run=dry_run)
+
+        elif step == 'repair_corrupt':
+            step_result = scan_and_repair(
+                str(directory),
+                trash_folder=trash_dir,
+                dry_run=dry_run,
+            )
+            # Strip the per-file results list from the summary to keep output readable
+            summary = {k: v for k, v in step_result.items() if k != 'results'}
+            results[step] = summary
 
     # Summary
     print("\n" + "=" * 70)

@@ -10,12 +10,23 @@ import os
 import logging
 from typing import Optional
 
+from ..config import WRITE_BATCH_SIZE
 from ..models import ImageInfo
 from .connection import ConnectionManager
 from .utils import make_cache_key, get_file_stats, row_to_imageinfo, CHUNK_SIZE
 
 
 logger = logging.getLogger(__name__)
+
+# Shared INSERT statement used by put(), put_batch(), and put_async()
+_INSERT_SQL = """
+    INSERT OR REPLACE INTO images (
+        path, file_size, mtime, cache_key,
+        width, height, pixel_count, bit_depth, format,
+        file_hash, perceptual_hash, quality_score,
+        dominant_color, error
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
 
 
 class CacheOperations:
@@ -34,6 +45,10 @@ class CacheOperations:
             connection_manager: ConnectionManager instance for database access
         """
         self.conn_mgr = connection_manager
+
+    # ------------------------------------------------------------------
+    # Read operations
+    # ------------------------------------------------------------------
 
     def get(self, filepath: str) -> Optional[ImageInfo]:
         """
@@ -59,13 +74,17 @@ class CacheOperations:
                 """, (cache_key,)).fetchone()
 
                 if row:
-                    # Update last accessed time (write operation)
-                    conn.execute("""
-                        UPDATE images SET last_accessed = strftime('%s', 'now')
-                        WHERE cache_key = ?
-                    """, (cache_key,))
+                    info = row_to_imageinfo(row)
 
-                    return row_to_imageinfo(row)
+            if row:
+                # F1: async last_accessed update — non-critical, no need to block
+                def _touch(conn, _key=cache_key):
+                    conn.execute(
+                        "UPDATE images SET last_accessed = strftime('%s', 'now') WHERE cache_key = ?",
+                        (_key,),
+                    )
+                self.conn_mgr.enqueue_write(_touch)
+                return info
 
             return None
 
@@ -73,48 +92,13 @@ class CacheOperations:
             logger.debug(f"Failed to get cached info for {filepath}: {e}")
             return None
 
-    def put(self, info: ImageInfo) -> bool:
-        """
-        Cache an ImageInfo object.
-
-        Args:
-            info: ImageInfo to cache
-
-        Returns:
-            True if successfully cached
-        """
-        try:
-            if not os.path.exists(info.path):
-                return False
-
-            mtime, size = get_file_stats(info.path)
-            cache_key = make_cache_key(info.path, mtime, size)
-
-            # Write operations use exclusive lock
-            with self.conn_mgr.connection(exclusive=True) as conn:
-                conn.execute("""
-                    INSERT OR REPLACE INTO images (
-                        path, file_size, mtime, cache_key,
-                        width, height, pixel_count, bit_depth, format,
-                        file_hash, perceptual_hash, quality_score, error
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    info.path, info.file_size, mtime, cache_key,
-                    info.width, info.height, info.pixel_count,
-                    info.bit_depth, info.format,
-                    info.file_hash, info.perceptual_hash,
-                    info.quality_score, info.error
-                ))
-
-            return True
-
-        except Exception as e:
-            logger.debug(f"Failed to cache image info for {info.path}: {e}")
-            return False
-
     def get_batch(self, filepaths: list[str]) -> dict[str, Optional[ImageInfo]]:
         """
         Get cached info for multiple files efficiently.
+
+        Flushes any pending background writes first so callers always see
+        a consistent view regardless of whether put_batch() / put_async()
+        was used (F1 guarantee).
 
         Args:
             filepaths: List of file paths
@@ -122,6 +106,9 @@ class CacheOperations:
         Returns:
             Dict mapping filepath to ImageInfo (or None if not cached)
         """
+        # F1: ensure all async writes are visible before reading
+        self.conn_mgr.flush_writes()
+
         results: dict[str, Optional[ImageInfo]] = {fp: None for fp in filepaths}
 
         try:
@@ -157,65 +144,156 @@ class CacheOperations:
                             results[filepath] = row_to_imageinfo(row)
                             all_hit_keys.append(row['cache_key'])
 
-                # Update last accessed for cache hits (also in chunks)
-                for i in range(0, len(all_hit_keys), CHUNK_SIZE):
-                    chunk = all_hit_keys[i:i + CHUNK_SIZE]
-                    placeholders = ','.join('?' * len(chunk))
-                    conn.execute(f"""
-                        UPDATE images SET last_accessed = strftime('%s', 'now')
-                        WHERE cache_key IN ({placeholders})
-                    """, chunk)
-
         except Exception as e:
             logger.warning(f"Error during batch retrieval: {e}")
+            return results
+
+        # F1: async last_accessed updates — batch into one write per CHUNK_SIZE
+        if all_hit_keys:
+            for i in range(0, len(all_hit_keys), CHUNK_SIZE):
+                chunk = all_hit_keys[i:i + CHUNK_SIZE]
+
+                def _touch_batch(conn, _chunk=chunk):
+                    placeholders = ','.join('?' * len(_chunk))
+                    conn.execute(
+                        f"UPDATE images SET last_accessed = strftime('%s', 'now') "
+                        f"WHERE cache_key IN ({placeholders})",
+                        _chunk,
+                    )
+
+                self.conn_mgr.enqueue_write(_touch_batch)
 
         return results
 
+    # ------------------------------------------------------------------
+    # Write operations
+    # ------------------------------------------------------------------
+
+    def put(self, info: ImageInfo) -> bool:
+        """
+        Cache an ImageInfo object (synchronous).
+
+        Args:
+            info: ImageInfo to cache
+
+        Returns:
+            True if successfully cached
+        """
+        try:
+            if not os.path.exists(info.path):
+                return False
+
+            mtime, size = get_file_stats(info.path)
+            cache_key = make_cache_key(info.path, mtime, size)
+
+            # Write operations use exclusive lock
+            with self.conn_mgr.connection(exclusive=True) as conn:
+                conn.execute(_INSERT_SQL, (
+                    info.path, info.file_size, mtime, cache_key,
+                    info.width, info.height, info.pixel_count,
+                    info.bit_depth, info.format,
+                    info.file_hash, info.perceptual_hash,
+                    info.quality_score, info.dominant_color, info.error
+                ))
+
+            return True
+
+        except Exception as e:
+            logger.debug(f"Failed to cache image info for {info.path}: {e}")
+            return False
+
+    def put_async(self, info: ImageInfo) -> None:
+        """
+        I1: Non-blocking cache write via the F1 background writer.
+
+        Pre-computes file stats in the calling thread (cheap os.stat call),
+        then hands the row data to the background writer. Returns immediately.
+        Call flush_writes() (or get_batch()) when the written data must be
+        visible to subsequent reads.
+
+        Args:
+            info: ImageInfo to cache
+        """
+        try:
+            if not os.path.exists(info.path):
+                return
+
+            mtime, size = get_file_stats(info.path)
+            cache_key = make_cache_key(info.path, mtime, size)
+            row = (
+                info.path, info.file_size, mtime, cache_key,
+                info.width, info.height, info.pixel_count,
+                info.bit_depth, info.format,
+                info.file_hash, info.perceptual_hash,
+                info.quality_score, info.dominant_color, info.error,
+            )
+
+            def _write(conn, _row=row):
+                conn.execute(_INSERT_SQL, _row)
+
+            self.conn_mgr.enqueue_write(_write)
+
+        except Exception as e:
+            logger.debug(f"Failed to queue async write for {info.path}: {e}")
+
     def put_batch(self, images: list[ImageInfo]) -> int:
         """
-        Cache multiple ImageInfo objects efficiently.
+        F1: Cache multiple ImageInfo objects via the background writer.
+
+        Rows are pre-computed in the calling thread (os.stat calls) and
+        handed off as write callables — one per WRITE_BATCH_SIZE chunk.
+        The background writer batches them into a single transaction,
+        eliminating per-chunk lock acquisition overhead at high worker counts.
 
         Args:
             images: List of ImageInfo objects
 
         Returns:
-            Number of successfully cached images
+            Number of rows successfully queued for writing
         """
-        cached = 0
+        total_queued = 0
 
-        try:
-            # Single exclusive lock for entire batch operation
-            with self.conn_mgr.connection(exclusive=True) as conn:
-                for info in images:
+        for batch_start in range(0, len(images), WRITE_BATCH_SIZE):
+            chunk = images[batch_start:batch_start + WRITE_BATCH_SIZE]
+            rows = self._precompute_rows(chunk)
+            if not rows:
+                continue
+
+            def _write(conn, _rows=rows):
+                for row in _rows:
                     try:
-                        if not os.path.exists(info.path):
-                            continue
-
-                        mtime, size = get_file_stats(info.path)
-                        cache_key = make_cache_key(info.path, mtime, size)
-
-                        conn.execute("""
-                            INSERT OR REPLACE INTO images (
-                                path, file_size, mtime, cache_key,
-                                width, height, pixel_count, bit_depth, format,
-                                file_hash, perceptual_hash, quality_score, error
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (
-                            info.path, info.file_size, mtime, cache_key,
-                            info.width, info.height, info.pixel_count,
-                            info.bit_depth, info.format,
-                            info.file_hash, info.perceptual_hash,
-                            info.quality_score, info.error
-                        ))
-                        cached += 1
-
+                        conn.execute(_INSERT_SQL, row)
                     except Exception:
-                        continue
+                        pass
 
-        except Exception as e:
-            logger.warning(f"Error during batch caching: {e}")
+            self.conn_mgr.enqueue_write(_write)
+            total_queued += len(rows)
 
-        return cached
+        return total_queued
+
+    def set_dominant_color(self, filepath: str, color_str: str) -> bool:
+        """
+        G1: Update just the dominant_color field for a cached image.
+
+        Used by sort.py to store K-means results so subsequent sorts skip
+        re-computation. Safe to call even if the image is not yet cached;
+        in that case it silently does nothing.
+
+        Args:
+            filepath: Path to the image file
+            color_str: Dominant color as "R,G,B" string
+
+        Returns:
+            True if a row was updated (approximate — update is async)
+        """
+        def _write(conn, _path=filepath, _color=color_str):
+            conn.execute(
+                "UPDATE images SET dominant_color = ? WHERE path = ?",
+                (_color, _path),
+            )
+
+        self.conn_mgr.enqueue_write(_write)
+        return True  # optimistically true; async so we can't check rowcount here
 
     def invalidate(self, filepath: str):
         """
@@ -245,6 +323,36 @@ class CacheOperations:
                 )
         except Exception as e:
             logger.debug(f"Failed to invalidate cache for directory {directory}: {e}")
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _precompute_rows(self, images: list[ImageInfo]) -> list[tuple]:
+        """
+        Pre-compute DB row tuples for a batch of ImageInfo objects.
+
+        Called in the submitting thread so os.stat / make_cache_key work
+        against the current filesystem state before the background writer
+        picks up the callable.
+        """
+        rows = []
+        for info in images:
+            try:
+                if not os.path.exists(info.path):
+                    continue
+                mtime, size = get_file_stats(info.path)
+                cache_key = make_cache_key(info.path, mtime, size)
+                rows.append((
+                    info.path, info.file_size, mtime, cache_key,
+                    info.width, info.height, info.pixel_count,
+                    info.bit_depth, info.format,
+                    info.file_hash, info.perceptual_hash,
+                    info.quality_score, info.dominant_color, info.error,
+                ))
+            except Exception:
+                continue
+        return rows
 
 
 __all__ = ['CacheOperations']

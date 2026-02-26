@@ -6,6 +6,8 @@ This module contains all configurable settings including:
 - Format quality rankings for determining which image to keep
 """
 
+import os
+
 # All supported image extensions (comprehensive list)
 IMAGE_EXTENSIONS = {
     # Common formats
@@ -55,13 +57,26 @@ FORMAT_QUALITY_RANK = {
 DEFAULT_THRESHOLD = 10
 
 # Default number of parallel workers for image analysis
-DEFAULT_WORKERS = 4
+# Auto-detect: cpu_count * 2, minimum 4, maximum 16
+_cpu_count = os.cpu_count() or 1
+DEFAULT_WORKERS = min(max(4, _cpu_count * 2), 16)
+
+# Maximum image pixels before PIL raises DecompressionBombWarning
+# Default PIL limit ~89MP; raised for high-res scans and panoramas
+# Override via PIXSIEVE_MAX_IMAGE_PIXELS env variable or set directly
+MAX_IMAGE_PIXELS = int(os.environ.get('PIXSIEVE_MAX_IMAGE_PIXELS', 500_000_000))
 
 # LSH (Locality-Sensitive Hashing) configuration
 # LSH provides O(n) performance vs O(n²) brute-force for perceptual matching
-LSH_AUTO_THRESHOLD = 5000  # Auto-enable LSH when >= this many images
+LSH_AUTO_THRESHOLD = 1000  # Auto-enable LSH when >= this many images
 LSH_DEFAULT_TABLES = 20    # Number of hash tables (more = better recall)
 LSH_DEFAULT_BITS = 16      # Bits per table (fewer = more candidates)
+
+# Large library thresholds and tuning
+LARGE_LIBRARY_THRESHOLD = 100_000                   # files — triggers large-library mode
+LARGE_LIBRARY_WORKERS   = min(os.cpu_count() * 4, 32)  # more aggressive parallelism
+WRITE_BATCH_SIZE        = 5_000                     # cache insert batch size before lock release
+DISCOVERY_CHUNK_SIZE    = 1_000                     # files per discovery chunk
 
 # Bit depth mapping for different image modes
 MODE_BIT_DEPTHS = {
@@ -72,7 +87,6 @@ MODE_BIT_DEPTHS = {
 }
 
 # State/history file locations
-import os
 STATE_FILE = os.path.join(os.path.expanduser('~'), '.duplicate_finder_state.json')
 HISTORY_FILE = os.path.join(os.path.expanduser('~'), '.duplicate_finder_history.json')
 
@@ -110,6 +124,10 @@ FORMAT_TO_EXT = {
     "ICO":  {"preferred": ".ico", "valid": [".ico"]},
     "HEIF": {"preferred": ".heic", "valid": [".heic"]},
 }
+
+# Corrupt image repair / quarantine
+TRASH_FOLDER_NAME = ".pixsieve_trash"
+DEFAULT_TRASH_DIR = os.path.join(os.path.expanduser("~"), ".pixsieve_trash")
 
 # Windows-specific constraints
 WINDOWS_RESERVED_NAMES = (

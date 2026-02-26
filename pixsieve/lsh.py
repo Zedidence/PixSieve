@@ -111,9 +111,11 @@ class HammingLSH:
         self.tables: list[dict[tuple, list[int]]] = [
             defaultdict(list) for _ in range(num_tables)
         ]
-        
+
         # Store hashes for verification
         self._hashes: dict[int, Any] = {}
+        # A2: Pre-computed bit arrays cached at add() time to avoid re-flattening on query
+        self._bits_cache: dict[int, list[bool]] = {}
         self._count = 0
     
     def _hash_to_bits(self, phash) -> list[bool]:
@@ -153,14 +155,16 @@ class HammingLSH:
         """
         if phash is None:
             return
-            
+
         bits = self._hash_to_bits(phash)
         self._hashes[idx] = phash
-        
+        # A2: cache bits so get_candidates() can skip re-flattening
+        self._bits_cache[idx] = bits
+
         for table_idx, table in enumerate(self.tables):
             key = self._get_bucket_key(bits, table_idx)
             table[key].append(idx)
-        
+
         self._count += 1
     
     def get_candidates(self, idx: int, phash) -> set[int]:
@@ -176,16 +180,20 @@ class HammingLSH:
         """
         if phash is None:
             return set()
-            
-        bits = self._hash_to_bits(phash)
+
+        # A2: use cached bits if available, otherwise compute fresh
+        bits = self._bits_cache.get(idx)
+        if bits is None:
+            bits = self._hash_to_bits(phash)
+
         candidates = set()
-        
+
         for table_idx, table in enumerate(self.tables):
             key = self._get_bucket_key(bits, table_idx)
             for candidate_idx in table[key]:
                 if candidate_idx != idx:
                     candidates.add(candidate_idx)
-        
+
         return candidates
     
     def get_all_candidate_pairs(self) -> set[tuple[int, int]]:
@@ -217,30 +225,51 @@ class HammingLSH:
 
         return pairs
 
-    def iter_candidate_pairs(self) -> Iterator[tuple[int, int]]:
+    def iter_candidate_pairs(self, deduplicate: bool = False) -> Iterator[tuple[int, int]]:
         """
         Iterate over candidate pairs without materializing them all in memory.
 
         This is a memory-efficient alternative to get_all_candidate_pairs().
-        Pairs may be yielded multiple times if they collide in multiple tables.
-        The caller should handle deduplication if needed (e.g., via Union-Find
-        checking if items are already in the same group).
+        Without deduplication, pairs may be yielded multiple times if they
+        collide in multiple tables; the caller should use Union-Find to skip
+        already-grouped pairs efficiently.
+
+        Args:
+            deduplicate: If True, use a seen-set to yield each (i, j) pair at
+                         most once across all tables. Trades memory for fewer
+                         upstream comparisons. Recommended when n < ~500K.
 
         Yields:
             Tuples of (i, j) where i < j, representing indices that collided
             in at least one hash table bucket.
         """
-        for table in self.tables:
-            for bucket in table.values():
-                if len(bucket) > 1:
-                    # All pairs within this bucket
-                    for i in range(len(bucket)):
-                        for j in range(i + 1, len(bucket)):
-                            idx1, idx2 = bucket[i], bucket[j]
-                            # Ensure consistent ordering
-                            if idx1 > idx2:
-                                idx1, idx2 = idx2, idx1
-                            yield (idx1, idx2)
+        # A1: optional within-LSH deduplication to reduce upstream work
+        if deduplicate:
+            seen: set[tuple[int, int]] = set()
+            for table in self.tables:
+                for bucket in table.values():
+                    if len(bucket) > 1:
+                        for i in range(len(bucket)):
+                            for j in range(i + 1, len(bucket)):
+                                idx1, idx2 = bucket[i], bucket[j]
+                                if idx1 > idx2:
+                                    idx1, idx2 = idx2, idx1
+                                pair = (idx1, idx2)
+                                if pair not in seen:
+                                    seen.add(pair)
+                                    yield pair
+        else:
+            for table in self.tables:
+                for bucket in table.values():
+                    if len(bucket) > 1:
+                        # All pairs within this bucket
+                        for i in range(len(bucket)):
+                            for j in range(i + 1, len(bucket)):
+                                idx1, idx2 = bucket[i], bucket[j]
+                                # Ensure consistent ordering
+                                if idx1 > idx2:
+                                    idx1, idx2 = idx2, idx1
+                                yield (idx1, idx2)
 
     def estimate_candidate_pairs(self) -> int:
         """
@@ -267,6 +296,7 @@ class HammingLSH:
         for table in self.tables:
             table.clear()
         self._hashes.clear()
+        self._bits_cache.clear()
         self._count = 0
     
     @property
@@ -275,25 +305,47 @@ class HammingLSH:
         return self._count
     
     def get_stats(self) -> dict:
-        """Get statistics about the index."""
+        """Get statistics about the index.
+
+        Also warns (via logging) when the bucket size distribution is heavily
+        skewed (coefficient of variation > 1.0), which suggests the hash
+        parameters should be tuned for better recall/precision balance.
+        """
+        import math as _math
+
         total_buckets = sum(len(table) for table in self.tables)
-        non_empty_buckets = sum(
-            1 for table in self.tables 
-            for bucket in table.values() 
-            if len(bucket) > 0
-        )
-        items_in_buckets = sum(
-            len(bucket) for table in self.tables 
+        bucket_sizes = [
+            len(bucket)
+            for table in self.tables
             for bucket in table.values()
-        )
-        
+        ]
+        non_empty_sizes = [s for s in bucket_sizes if s > 0]
+        non_empty_buckets = len(non_empty_sizes)
+        items_in_buckets = sum(non_empty_sizes)
+        avg = items_in_buckets / max(1, non_empty_buckets)
+
+        # A3: coefficient of variation warning for skewed distributions
+        skew_warning = False
+        if non_empty_buckets > 1:
+            variance = sum((s - avg) ** 2 for s in non_empty_sizes) / non_empty_buckets
+            cv = _math.sqrt(variance) / avg if avg > 0 else 0.0
+            if cv > 1.0:
+                skew_warning = True
+                _logger = logging.getLogger(__name__)
+                _logger.warning(
+                    f"LSH bucket distribution is heavily skewed (CV={cv:.2f} > 1.0). "
+                    "Consider increasing bits_per_table or num_tables for better "
+                    "recall/precision balance."
+                )
+
         return {
             'num_tables': self.num_tables,
             'bits_per_table': self.bits_per_table,
             'total_items': self._count,
             'total_buckets': total_buckets,
             'non_empty_buckets': non_empty_buckets,
-            'avg_bucket_size': items_in_buckets / max(1, non_empty_buckets),
+            'avg_bucket_size': avg,
+            'skew_warning': skew_warning,
         }
 
 
@@ -340,9 +392,11 @@ def calculate_optimal_params(
         return (18, 18)
     elif num_images < 200000:
         return (20, 16)
-    else:
-        # Large collections: prioritize recall
+    elif num_images < 500000:
         return (25, 14)
+    else:
+        # Very large collections (500k–750k+): more tables, fewer bits for better recall
+        return (30, 12)
 
 
 def estimate_comparison_reduction(

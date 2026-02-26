@@ -13,7 +13,7 @@ from pathlib import Path
 from ..config import MODE_BIT_DEPTHS
 from ..models import ImageInfo
 from .dependencies import Image, imagehash, HAS_HEIF_SUPPORT, _logger
-from .hashing import calculate_file_hash, calculate_quality_score
+from .hashing import calculate_file_hash, calculate_quality_score, _ensure_phash_mode
 
 
 def analyze_image(
@@ -80,9 +80,9 @@ def analyze_image(
                 # Perceptual hash
                 if calculate_phash:
                     try:
-                        if img.mode not in ('RGB', 'L'):
-                            img = img.convert('RGB')
-                        phash = imagehash.phash(img, hash_size=16)
+                        # C1: shared helper removes duplicated mode-conversion logic
+                        phash_img = _ensure_phash_mode(img)
+                        phash = imagehash.phash(phash_img, hash_size=16)
                         info.perceptual_hash = str(phash)
                     except Exception as phash_err:
                         # FIXED #4: Log but don't fail the whole analysis

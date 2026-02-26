@@ -34,6 +34,7 @@ class ImageInfo:
         file_hash: SHA256 hash of file contents
         perceptual_hash: Perceptual hash for similarity matching
         quality_score: Computed quality score for ranking
+        dominant_color: Cached dominant RGB color as "R,G,B" string (G1 optimization)
         error: Error message if analysis failed
     """
     path: str
@@ -46,6 +47,7 @@ class ImageInfo:
     file_hash: str = ""
     perceptual_hash: str = ""
     quality_score: float = 0.0
+    dominant_color: Optional[str] = None  # "R,G,B" or None
     error: Optional[str] = None
     
     def __hash__(self):

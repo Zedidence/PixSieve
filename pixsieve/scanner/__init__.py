@@ -19,14 +19,14 @@ Public API:
 from __future__ import annotations
 
 # Import public functions from submodules
-from .file_discovery import find_image_files
+from .file_discovery import find_image_files, iter_image_chunks
 from .hashing import (
     calculate_file_hash,
     calculate_perceptual_hash,
     calculate_quality_score,
 )
 from .analysis import analyze_image
-from .parallel import analyze_images_parallel
+from .parallel import analyze_images_parallel, analyze_images_streaming
 from .deduplication import (
     find_exact_duplicates,
     find_perceptual_duplicates,
@@ -45,6 +45,7 @@ def has_heif_support() -> bool:
 __all__ = [
     # File discovery
     'find_image_files',
+    'iter_image_chunks',
     # Hashing functions
     'calculate_file_hash',
     'calculate_perceptual_hash',
@@ -52,6 +53,7 @@ __all__ = [
     # Image analysis
     'analyze_image',
     'analyze_images_parallel',
+    'analyze_images_streaming',
     # Duplicate detection
     'find_exact_duplicates',
     'find_perceptual_duplicates',
