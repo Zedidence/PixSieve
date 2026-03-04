@@ -295,6 +295,31 @@ class CacheOperations:
         self.conn_mgr.enqueue_write(_write)
         return True  # optimistically true; async so we can't check rowcount here
 
+    def set_dominant_color_batch(self, updates: list[tuple[str, str]]) -> bool:
+        """
+        Batch-update dominant_color for multiple images in a single transaction.
+
+        Reduces N round-trips to the background writer queue down to one
+        executemany call, which is more efficient for large sort operations.
+
+        Args:
+            updates: List of (color_str, filepath) tuples
+
+        Returns:
+            True (optimistic; update is async)
+        """
+        if not updates:
+            return True
+
+        def _write(conn, _updates=updates):
+            conn.executemany(
+                "UPDATE images SET dominant_color = ? WHERE path = ?",
+                _updates,
+            )
+
+        self.conn_mgr.enqueue_write(_write)
+        return True
+
     def invalidate(self, filepath: str):
         """
         Remove a specific file from the cache.

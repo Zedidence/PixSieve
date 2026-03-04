@@ -15,6 +15,7 @@ from typing import Callable, Optional
 from ..state import ScanState, HistoryManager
 from ..scanner import (
     find_image_files,
+    iter_image_chunks,
     analyze_images_parallel,
     find_exact_duplicates,
     find_perceptual_duplicates,
@@ -299,10 +300,32 @@ class ScanOrchestrator:
             self.save_callback()
             return None
 
-        # Find images
-        image_files = find_image_files(self.directory, recursive=self.recursive)
+        # Find images — stream chunks so the frontend sees live counts
+        image_files = []
+        last_update = time.time()
+        for chunk in iter_image_chunks(self.directory, recursive=self.recursive):
+            if self.scan_state.cancel_requested:
+                self.scan_state.status = 'cancelled'
+                self.scan_state.message = 'Scan cancelled by user'
+                self.save_callback()
+                return None
+            image_files.extend(chunk)
+            now = time.time()
+            if now - last_update >= 0.5:
+                count = len(image_files)
+                self.scan_state.total_files = count
+                self.scan_state.message = (
+                    f'Scanning for image files... {formatters.format_number(count)} found so far'
+                )
+                self.scan_state.progress_details['elapsed_seconds'] = (
+                    now - self.scan_state.progress_details['start_time']
+                )
+                last_update = now
+
         self.scan_state.total_files = len(image_files)
-        self.scan_state.progress_details['elapsed_seconds'] = time.time() - self.scan_state.progress_details['start_time']
+        self.scan_state.progress_details['elapsed_seconds'] = (
+            time.time() - self.scan_state.progress_details['start_time']
+        )
 
         if not image_files:
             self.scan_state.status = 'complete'
@@ -419,8 +442,10 @@ class ScanOrchestrator:
         if not self.perceptual_only:
             self.scan_state.status = 'comparing'
             self.scan_state.stage = 'exact_matching'
+            self.scan_state.progress = 52  # Show movement before instant O(n) hash pass
             self.scan_state.message = f'Finding exact duplicates among {formatters.format_number(len(images))} images...'
             self.scan_state.stage_progress = 0
+            self.save_callback()
 
             # Check for cancel
             if self.scan_state.cancel_requested:

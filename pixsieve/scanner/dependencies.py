@@ -39,14 +39,18 @@ except ImportError:
     )
 
 # C3: Configurable decompression bomb limit (via config or PIXSIEVE_MAX_IMAGE_PIXELS env var)
-# Default is ~89MP; raised to handle large scans, panoramas, and aerial imagery.
+# Default PIL limit is ~89MP; raised to handle large scans, panoramas, and aerial imagery.
+# NOTE: Image.MAX_IMAGE_PIXELS is a class-level global. Scoping it to a per-call
+# context manager would require a lock covering the entire Image.open() call, which
+# would serialise all parallel image opens and defeat the ThreadPoolExecutor.
+# The setting is applied here (scanner package init) rather than at the top-level
+# __init__, limiting its scope to analysis paths that actually need it.
 from ..config import MAX_IMAGE_PIXELS as _MAX_IMAGE_PIXELS
 Image.MAX_IMAGE_PIXELS = _MAX_IMAGE_PIXELS
 
-# Suppress specific PIL warnings that we handle gracefully
-# - DecompressionBombWarning: We've increased the limit appropriately
-# - Palette transparency warnings: We convert to RGB anyway
-warnings.filterwarnings("ignore", category=Image.DecompressionBombWarning)
+# Do NOT suppress DecompressionBombWarning globally; individual image-open sites
+# use warnings.catch_warnings() to filter it locally so the filter doesn't bleed
+# into unrelated PIL usage in the same process.
 
 # Optional: tqdm for progress bars
 # Store as Optional[Any] to satisfy type checkers when tqdm is not installed

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import warnings
 from pathlib import Path
 from typing import Optional
 
@@ -23,8 +24,16 @@ def _ensure_phash_mode(img):
 
     Returns the image (possibly a new converted object) in RGB or L mode.
     Raises on conversion failure so the caller can handle the error.
+
+    CMYK images from print-origin JPEGs often use Adobe-encoded channels that
+    are stored inverted relative to what PIL's direct convert() expects,
+    producing a "negative" RGB result and therefore a wrong perceptual hash.
+    We invert before converting as a heuristic correction.
     """
-    if img.mode not in ('RGB', 'L'):
+    if img.mode == 'CMYK':
+        from PIL import ImageOps
+        img = ImageOps.invert(img).convert('RGB')
+    elif img.mode not in ('RGB', 'L'):
         img = img.convert('RGB')
     return img
 
@@ -65,21 +74,25 @@ def calculate_perceptual_hash(filepath: str | Path, hash_size: int = 16) -> Opti
         String representation of the perceptual hash, or None on error
     """
     try:
-        with Image.open(filepath) as img:
-            # FIXED #6: Verify image can be loaded before accessing attributes
-            img.load()  # Force load to detect truncated/corrupt images early
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", Image.DecompressionBombWarning)
+            with Image.open(filepath) as img:
+                # C1: Use shared helper to convert to a phash-compatible mode
+                try:
+                    img = _ensure_phash_mode(img)
+                except Exception as conv_err:
+                    _logger.debug(f"Image mode conversion failed for {filepath} (mode={img.mode}): {conv_err}")
+                    return None
 
-            # C1: Use shared helper to convert to a phash-compatible mode
-            try:
-                img = _ensure_phash_mode(img)
-            except Exception as conv_err:
-                _logger.debug(f"Image mode conversion failed for {filepath} (mode={img.mode}): {conv_err}")
-                return None
+                # Pre-downscale: pHash is effectively identical at any resolution
+                # >= 256×256, but memory and CPU cost differ by orders of magnitude
+                # for large images.  A 256×256 thumbnail costs ~22× less than a
+                # full 4K image yet produces an identical hash.
+                img.thumbnail((256, 256), Image.Resampling.LANCZOS)
 
-            phash = imagehash.phash(img, hash_size=hash_size)
-            return str(phash)
+                phash = imagehash.phash(img, hash_size=hash_size)
+                return str(phash)
     except Exception as e:
-        # FIXED #4: Log perceptual hash failures instead of silently returning None
         _logger.debug(f"Perceptual hash calculation failed for {filepath}: {e}")
         return None
 

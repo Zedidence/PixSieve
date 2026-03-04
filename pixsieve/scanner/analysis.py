@@ -8,6 +8,7 @@ metadata extraction, and hash calculation.
 from __future__ import annotations
 
 import os
+import warnings
 from pathlib import Path
 
 from ..config import MODE_BIT_DEPTHS
@@ -57,37 +58,56 @@ def analyze_image(
             info.error = "HEIC/HEIF support not installed (pip install pillow-heif)"
             return info
 
-        # Open image and extract metadata
-        # FIXED #6: Wrap in try-except to handle corrupt/truncated files
+        # Open image and extract metadata.
+        #
+        # When calculate_phash=True (the common scan path), thumbnail() loads
+        # pixel data which naturally raises for truncated/corrupt files — so a
+        # separate verify() pass is unnecessary.  OSError from thumbnail is
+        # re-raised as a corruption error below.
+        #
+        # When calculate_phash=False no pixel data is loaded, so we still need
+        # an explicit verify() pass (which exhausts the handle, requiring a
+        # reopen for metadata extraction).
+        if not calculate_phash:
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", Image.DecompressionBombWarning)
+                    with Image.open(filepath) as _verify_img:
+                        _verify_img.verify()
+            except Image.UnidentifiedImageError as e:
+                info.error = f"Not a valid image file: {e}"
+                return info
+            except Exception as load_err:
+                info.error = f"Corrupt or truncated image: {load_err}"
+                return info
+
         try:
-            with Image.open(filepath) as img:
-                # Force load to detect truncated images early
-                try:
-                    img.load()
-                except Exception as load_err:
-                    info.error = f"Corrupt or truncated image: {load_err}"
-                    return info
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", Image.DecompressionBombWarning)
+                with Image.open(filepath) as img:
+                    info.width = img.width
+                    info.height = img.height
+                    info.pixel_count = img.width * img.height
+                    info.format = img.format or ""
+                    info.bit_depth = MODE_BIT_DEPTHS.get(img.mode, 24)
 
-                # Now safe to access attributes
-                info.width = img.width
-                info.height = img.height
-                info.pixel_count = img.width * img.height
-                info.format = img.format or ""
-
-                # Bit depth
-                info.bit_depth = MODE_BIT_DEPTHS.get(img.mode, 24)
-
-                # Perceptual hash
-                if calculate_phash:
-                    try:
-                        # C1: shared helper removes duplicated mode-conversion logic
-                        phash_img = _ensure_phash_mode(img)
-                        phash = imagehash.phash(phash_img, hash_size=16)
-                        info.perceptual_hash = str(phash)
-                    except Exception as phash_err:
-                        # FIXED #4: Log but don't fail the whole analysis
-                        _logger.debug(f"Perceptual hash failed for {filepath}: {phash_err}")
-                        info.perceptual_hash = ""
+                    if calculate_phash:
+                        try:
+                            # C1: shared helper removes duplicated mode-conversion logic
+                            phash_img = _ensure_phash_mode(img)
+                            # Pre-downscale before hashing: hash is identical at any
+                            # resolution >= 256×256 but cost differs by orders of magnitude.
+                            # thumbnail() loads pixel data — OSError here means truncation.
+                            phash_img.thumbnail((256, 256), Image.Resampling.LANCZOS)
+                            phash = imagehash.phash(phash_img, hash_size=16)
+                            info.perceptual_hash = str(phash)
+                        except OSError as phash_err:
+                            # OSError from thumbnail/load signals truncated pixel data.
+                            info.error = f"Corrupt or truncated image: {phash_err}"
+                            return info
+                        except Exception as phash_err:
+                            _logger.debug(f"Perceptual hash failed for {filepath}: {phash_err}")
+                            info.perceptual_hash = ""
 
         except Image.UnidentifiedImageError as e:
             info.error = f"Not a valid image file: {e}"

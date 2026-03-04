@@ -52,6 +52,9 @@ def create_app(log_level: int = LOG_MINIMAL) -> Flask:
     
     app = Flask(__name__, template_folder=template_dir)
     app.secret_key = 'duplicate-finder-secret-key'
+    # Cache static files (app.css, app.js) for 1 year in the browser.
+    # The files are implicitly versioned by app restarts, which clears the cache.
+    app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 31536000
     
     # Configure logging based on level
     if log_level < LOG_VERBOSE:

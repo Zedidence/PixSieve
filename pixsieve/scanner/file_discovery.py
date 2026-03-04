@@ -62,7 +62,13 @@ def iter_image_chunks(
             continue
 
         if resolve_symlinks:
-            resolved = str(filepath.resolve())
+            try:
+                resolved = str(filepath.resolve())
+            except OSError:
+                # filepath.resolve() raises OSError on broken symlinks in
+                # Python 3.10+.  Fall back to the un-resolved absolute path so
+                # the file is still discovered rather than silently dropped.
+                resolved = str(filepath.absolute())
         else:
             resolved = str(filepath.absolute())
 
@@ -105,6 +111,10 @@ def find_image_files(
         - Automatically filters out HEIC/HEIF files if pillow-heif is not installed
         - Handles symlinks by resolving to canonical paths (when resolve_symlinks=True)
         - Deduplicates files that may be encountered via multiple paths
+        - Memory trade-off: all paths are accumulated in a single list before
+          returning. For very large libraries (500k+ files) this can use
+          100–150 MB. Use iter_image_chunks() directly to process files in
+          streaming fashion without materialising the full list.
     """
     images: list[str] = []
     for chunk in iter_image_chunks(root_path, recursive=recursive, resolve_symlinks=resolve_symlinks):

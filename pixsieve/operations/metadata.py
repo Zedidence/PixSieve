@@ -86,8 +86,11 @@ def set_exif_dates(image_path: Path, new_datetime: datetime) -> bool:
         except Exception:
             exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "1st": {}, "thumbnail": None}
 
-        # Set all EXIF date fields
-        exif_str = new_datetime.strftime("%Y:%m:%d %H:%M:%S").encode('utf-8')
+        # Set all EXIF date fields.
+        # EXIF spec (JEITA CP-3451) requires 7-bit ASCII for date strings;
+        # utf-8 is technically incorrect even though the date format only
+        # produces ASCII characters — strict readers may reject the tag.
+        exif_str = new_datetime.strftime("%Y:%m:%d %H:%M:%S").encode('ascii')
         exif_dict['Exif'][piexif.ExifIFD.DateTimeOriginal] = exif_str
         exif_dict['Exif'][piexif.ExifIFD.DateTimeDigitized] = exif_str
         exif_dict['0th'][piexif.ImageIFD.DateTime] = exif_str

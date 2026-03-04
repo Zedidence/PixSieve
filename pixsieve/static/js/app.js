@@ -22,6 +22,8 @@ let scanDirectory = '';
 let isScanning = false;
 let isPaused = false;
 let stageStartTimes = {};
+let currentView = 'grid';   // 'grid' | 'list' | 'compare'
+let showAllGroups = false;
 
 // =============================================================
 // Initialization
@@ -461,6 +463,7 @@ function newScan() {
             groups = [];
             selections = {};
             errorImages = [];
+            showAllGroups = false;
             hidePerceptualWarning();
             document.getElementById('groupsContainer').classList.remove('active');
             document.getElementById('statsBar').classList.remove('active');
@@ -468,6 +471,8 @@ function newScan() {
             document.getElementById('filterBar').classList.remove('active');
             document.getElementById('cacheBanner').classList.remove('active');
             document.getElementById('errorSection').classList.remove('active');
+            const pb = document.getElementById('paginationBottom');
+            if (pb) pb.classList.remove('active');
         });
     }
 }
@@ -490,10 +495,25 @@ function renderErrorImages() {
 
     grid.innerHTML = errorImages.map(img => `
         <div class="error-image-item">
-            <div class="error-image-path">${escapeHtml(img.path)}</div>
+            <div class="error-item-header">
+                <div class="error-image-path">${escapeHtml(img.path)}</div>
+                <button class="error-copy-btn" title="Copy path to clipboard"
+                    onclick="copyErrorPath(this, ${JSON.stringify(img.path)})">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                    </svg>
+                </button>
+            </div>
             <div class="error-image-error">${escapeHtml(img.error || 'Unknown error')}</div>
         </div>
     `).join('');
+}
+
+function copyErrorPath(btn, path) {
+    navigator.clipboard.writeText(path).then(() => {
+        btn.classList.add('copied');
+        setTimeout(() => btn.classList.remove('copied'), 1500);
+    });
 }
 
 function toggleErrorSection() {
@@ -503,6 +523,12 @@ function toggleErrorSection() {
 
 // =============================================================
 // Filtering & Pagination
+function clearFilters() {
+    document.getElementById('filterType').value = 'all';
+    document.getElementById('searchFilter').value = '';
+    applyFilters();
+}
+
 // =============================================================
 function applyFilters() {
     const typeFilter = document.getElementById('filterType').value;
@@ -552,29 +578,67 @@ function applyStrategy() {
 }
 
 function updatePagination() {
-    const totalPages = Math.ceil(filteredGroups.length / PAGE_SIZE) || 1;
-    document.getElementById('pageInfo').textContent = `Page ${currentPage} of ${totalPages}`;
-    document.getElementById('prevBtn').disabled = currentPage <= 1;
-    document.getElementById('nextBtn').disabled = currentPage >= totalPages;
+    const paginationBottom = document.getElementById('paginationBottom');
+    const showAllBtnTop = document.getElementById('showAllBtnTop');
+    const showAllBtn = document.getElementById('showAllBtn');
+
+    if (showAllGroups) {
+        const label = `Showing all ${filteredGroups.length} groups`;
+        document.getElementById('pageInfo').textContent = label;
+        document.getElementById('pageInfoBottom').textContent = label;
+        document.getElementById('prevBtn').disabled = true;
+        document.getElementById('nextBtn').disabled = true;
+        document.getElementById('prevBtnBottom').disabled = true;
+        document.getElementById('nextBtnBottom').disabled = true;
+        if (showAllBtnTop) { showAllBtnTop.textContent = 'Show Pages'; showAllBtnTop.classList.add('active'); }
+        if (showAllBtn) { showAllBtn.textContent = 'Show Pages'; showAllBtn.classList.add('active'); }
+    } else {
+        const totalPages = Math.ceil(filteredGroups.length / PAGE_SIZE) || 1;
+        const label = `Page ${currentPage} of ${totalPages}`;
+        document.getElementById('pageInfo').textContent = label;
+        document.getElementById('pageInfoBottom').textContent = label;
+        document.getElementById('prevBtn').disabled = currentPage <= 1;
+        document.getElementById('nextBtn').disabled = currentPage >= totalPages;
+        document.getElementById('prevBtnBottom').disabled = currentPage <= 1;
+        document.getElementById('nextBtnBottom').disabled = currentPage >= totalPages;
+        if (showAllBtnTop) { showAllBtnTop.textContent = 'Show All'; showAllBtnTop.classList.remove('active'); }
+        if (showAllBtn) { showAllBtn.textContent = 'Show All'; showAllBtn.classList.remove('active'); }
+    }
+
+    if (paginationBottom) {
+        paginationBottom.classList.toggle('active', filteredGroups.length > 0);
+    }
 }
 
 function prevPage() {
-    if (currentPage > 1) {
+    if (!showAllGroups && currentPage > 1) {
         currentPage--;
         renderGroups();
-        updatePagination();
         window.scrollTo(0, 0);
     }
 }
 
 function nextPage() {
     const totalPages = Math.ceil(filteredGroups.length / PAGE_SIZE);
-    if (currentPage < totalPages) {
+    if (!showAllGroups && currentPage < totalPages) {
         currentPage++;
         renderGroups();
-        updatePagination();
         window.scrollTo(0, 0);
     }
+}
+
+function setView(view) {
+    currentView = view;
+    document.querySelectorAll('.view-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.view === view);
+    });
+    renderGroups();
+}
+
+function toggleShowAll() {
+    showAllGroups = !showAllGroups;
+    currentPage = 1;
+    renderGroups();
 }
 
 // =============================================================
@@ -603,20 +667,51 @@ function renderGroups() {
     const container = document.getElementById('groupsContainer');
 
     if (filteredGroups.length === 0) {
-        container.innerHTML = `
-            <div class="no-results">
-                <h2>✨ No Duplicates Found!</h2>
-                <p>Your image collection is clean, or no matches for current filters.</p>
-            </div>
-        `;
+        if (groups.length === 0) {
+            container.innerHTML = `
+                <div class="no-results">
+                    <h2>✨ No Duplicates Found</h2>
+                    <p>Your image collection is clean — no exact or perceptual duplicates detected.</p>
+                </div>
+            `;
+        } else {
+            container.innerHTML = `
+                <div class="no-results no-results--filtered">
+                    <h2>No matches for current filters</h2>
+                    <p>${groups.length} group${groups.length !== 1 ? 's' : ''} hidden by active filters.
+                    <a href="#" onclick="clearFilters(); return false;">Clear filters</a></p>
+                </div>
+            `;
+        }
+        updatePagination();
         return;
     }
 
-    const start = (currentPage - 1) * PAGE_SIZE;
-    const pageGroups = filteredGroups.slice(start, start + PAGE_SIZE);
+    const pageGroups = showAllGroups
+        ? filteredGroups
+        : filteredGroups.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
-    // Build HTML with data-src for lazy loading (no src= on images)
-    container.innerHTML = pageGroups.map((group) => `
+    container.innerHTML = pageGroups.map(group => _buildGroupCardHtml(group)).join('');
+
+    // Observe each group card for lazy image injection
+    container.querySelectorAll('.group-card').forEach(card => {
+        _groupImageObserver.observe(card);
+    });
+
+    updatePagination();
+}
+
+function _buildGroupCardHtml(group) {
+    let imagesHtml;
+    if (currentView === 'list') {
+        imagesHtml = _buildGroupImagesListHtml(group);
+    } else if (currentView === 'compare') {
+        imagesHtml = _buildGroupImagesCompareHtml(group);
+    } else {
+        imagesHtml = _buildGroupImagesGridHtml(group);
+    }
+
+    return `
         <div class="group-card" data-group-id="${group.id}">
             <div class="group-header">
                 <div class="group-title">
@@ -628,63 +723,129 @@ function renderGroups() {
                     <span style="margin-left: 10px; color: var(--text-muted);">Save ${group.potential_savings_formatted}</span>
                 </div>
             </div>
-            <div class="group-images">
-                ${group.images.map((img, idx) => `
-                    <div class="image-card ${selections[img.path] === 'keep' ? 'selected' : 'to-delete'}"
-                         data-path="${escapeHtml(img.path)}"
-                         onclick="toggleSelection('${escapeJs(img.path)}', ${group.id})">
-                        <div class="image-wrapper">
-                            <img class="image-preview"
-                                 data-src="/api/image?path=${encodeURIComponent(img.path)}"
-                                 alt="${escapeHtml(img.filename)}"
-                                 loading="lazy"
-                                 onerror="this.alt='Failed to load'"
-                                 ondblclick="event.stopPropagation(); openLightbox(${group.id}, ${idx})">
-                            ${selections[img.path] === 'keep'
-                                ? '<div class="keep-badge">✔ KEEP</div>'
-                                : '<div class="delete-badge">✖ DELETE</div>'}
-                        </div>
-                        <div class="image-info">
-                            <div class="image-filename">${escapeHtml(img.filename)}</div>
-                            <div class="image-path">${escapeHtml(img.directory)}</div>
-                            <div class="image-meta">
-                                <div class="meta-item">
-                                    <span class="meta-label">Size</span>
-                                    <span class="meta-value">${img.file_size_formatted}</span>
-                                </div>
-                                <div class="meta-item">
-                                    <span class="meta-label">Resolution</span>
-                                    <span class="meta-value">${img.resolution}</span>
-                                </div>
-                                <div class="meta-item">
-                                    <span class="meta-label">Megapixels</span>
-                                    <span class="meta-value">${img.megapixels} MP</span>
-                                </div>
-                                <div class="meta-item">
-                                    <span class="meta-label">Format</span>
-                                    <span class="meta-value">${img.format || 'Unknown'}</span>
-                                </div>
+            ${imagesHtml}
+        </div>
+    `;
+}
+
+function _buildGroupImagesGridHtml(group) {
+    return `
+        <div class="group-images">
+            ${group.images.map((img, idx) => `
+                <div class="image-card ${selections[img.path] === 'keep' ? 'selected' : 'to-delete'}"
+                     data-path="${escapeHtml(img.path)}"
+                     onclick="toggleSelection('${escapeJs(img.path)}', ${group.id})">
+                    <div class="image-wrapper">
+                        <img class="image-preview"
+                             data-src="/api/image?path=${encodeURIComponent(img.path)}"
+                             alt="${escapeHtml(img.filename)}"
+                             loading="lazy"
+                             onerror="this.alt='Failed to load'"
+                             ondblclick="event.stopPropagation(); openLightbox(${group.id}, ${idx})">
+                        ${selections[img.path] === 'keep'
+                            ? '<div class="keep-badge">✔ KEEP</div>'
+                            : '<div class="delete-badge">✖ DELETE</div>'}
+                    </div>
+                    <div class="image-info">
+                        <div class="image-filename">${escapeHtml(img.filename)}</div>
+                        <div class="image-path">${escapeHtml(img.directory)}</div>
+                        <div class="image-meta">
+                            <div class="meta-item">
+                                <span class="meta-label">Size</span>
+                                <span class="meta-value">${img.file_size_formatted}</span>
                             </div>
-                            <div class="quality-score">
-                                <div class="meta-item">
-                                    <span class="meta-label">Quality Score</span>
-                                    <span class="meta-value">${img.quality_score}</span>
-                                </div>
-                                <div class="quality-bar">
-                                    <div class="quality-fill" style="width: ${Math.min(100, img.quality_score)}%"></div>
-                                </div>
+                            <div class="meta-item">
+                                <span class="meta-label">Resolution</span>
+                                <span class="meta-value">${img.resolution}</span>
+                            </div>
+                            <div class="meta-item">
+                                <span class="meta-label">Megapixels</span>
+                                <span class="meta-value">${img.megapixels} MP</span>
+                            </div>
+                            <div class="meta-item">
+                                <span class="meta-label">Format</span>
+                                <span class="meta-value">${img.format || 'Unknown'}</span>
+                            </div>
+                        </div>
+                        <div class="quality-score">
+                            <div class="meta-item">
+                                <span class="meta-label">Quality Score</span>
+                                <span class="meta-value">${img.quality_score}</span>
+                            </div>
+                            <div class="quality-bar">
+                                <div class="quality-fill" style="width: ${Math.min(100, img.quality_score)}%"></div>
                             </div>
                         </div>
                     </div>
-                `).join('')}
-            </div>
+                </div>
+            `).join('')}
         </div>
-    `).join('');
+    `;
+}
 
-    // Observe each group card for lazy image injection
-    container.querySelectorAll('.group-card').forEach(card => {
-        _groupImageObserver.observe(card);
-    });
+function _buildGroupImagesListHtml(group) {
+    return `
+        <div class="group-images-list">
+            ${group.images.map((img, idx) => {
+                const keep = selections[img.path] === 'keep';
+                return `
+                    <div class="image-row ${keep ? 'selected' : 'to-delete'}"
+                         onclick="toggleSelection('${escapeJs(img.path)}', ${group.id})">
+                        <img class="image-row-thumb"
+                             data-src="/api/image?path=${encodeURIComponent(img.path)}"
+                             alt="${escapeHtml(img.filename)}"
+                             onerror="this.removeAttribute('src')">
+                        <div class="image-row-name">${escapeHtml(img.filename)}</div>
+                        <div class="image-row-path">${escapeHtml(img.directory)}</div>
+                        <div class="image-row-meta">
+                            <span>${img.file_size_formatted}</span>
+                            <span>${img.resolution}</span>
+                            <span>${img.format || 'Unknown'}</span>
+                        </div>
+                        <div class="image-row-quality">
+                            <span style="font-size:0.72rem;color:var(--text-muted)">Q: ${img.quality_score}</span>
+                            <div class="image-row-quality-bar">
+                                <div class="quality-fill" style="width:${Math.min(100, img.quality_score)}%"></div>
+                            </div>
+                        </div>
+                        <div class="image-row-badge ${keep ? 'keep' : 'delete'}">${keep ? '✔ KEEP' : '✖ DELETE'}</div>
+                    </div>
+                `;
+            }).join('')}
+        </div>
+    `;
+}
+
+function _buildGroupImagesCompareHtml(group) {
+    return `
+        <div class="group-images-compare">
+            ${group.images.map((img, idx) => {
+                const keep = selections[img.path] === 'keep';
+                return `
+                    <div class="compare-card ${keep ? 'selected' : 'to-delete'}"
+                         onclick="toggleSelection('${escapeJs(img.path)}', ${group.id})"
+                         ondblclick="event.stopPropagation(); openLightbox(${group.id}, ${idx})">
+                        <img class="compare-preview"
+                             data-src="/api/image?path=${encodeURIComponent(img.path)}"
+                             alt="${escapeHtml(img.filename)}"
+                             onerror="this.alt='Failed to load'">
+                        <div class="compare-info">
+                            <div class="compare-filename">
+                                ${keep ? '✔ KEEP' : '✖ DELETE'} — ${escapeHtml(img.filename)}
+                            </div>
+                            <div class="compare-meta">
+                                ${img.file_size_formatted} &bull; ${img.resolution} &bull; ${img.megapixels} MP &bull; ${img.format || 'Unknown'}<br>
+                                Quality: ${img.quality_score}
+                            </div>
+                            <div class="quality-bar" style="margin-top:8px">
+                                <div class="quality-fill" style="width:${Math.min(100, img.quality_score)}%"></div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('')}
+        </div>
+    `;
 }
 
 // =============================================================
@@ -953,6 +1114,29 @@ document.addEventListener('keydown', e => {
 
     if (e.key === 'z') {
         undoAction();
+        return;
+    }
+
+    // Page navigation: left/right arrows when results are shown
+    if (e.key === 'ArrowLeft' && document.getElementById('groupsContainer').classList.contains('active')) {
+        e.preventDefault();
+        prevPage();
+        return;
+    }
+    if (e.key === 'ArrowRight' && document.getElementById('groupsContainer').classList.contains('active')) {
+        e.preventDefault();
+        nextPage();
+        return;
+    }
+
+    // Focus search with /
+    if (e.key === '/') {
+        const search = document.getElementById('searchFilter');
+        if (search) {
+            e.preventDefault();
+            search.focus();
+            search.select();
+        }
         return;
     }
 });

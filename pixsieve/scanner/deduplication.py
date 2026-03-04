@@ -8,9 +8,9 @@ Union-Find data structures and optional LSH acceleration.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from collections import defaultdict
-from functools import lru_cache
 from typing import Optional, Callable, Any
 
 from ..config import LSH_AUTO_THRESHOLD
@@ -19,12 +19,62 @@ from ..models import ImageInfo, DuplicateGroup
 from .dependencies import imagehash, HAS_TQDM, _tqdm_class
 
 
-# B2: LRU cache for parsed perceptual hashes — avoids re-parsing the same hex
-# string on repeated runs or across both brute-force and LSH code paths.
-@lru_cache(maxsize=None)
+# B2: Thread-safe dict cache for parsed perceptual hashes — avoids re-parsing
+# the same hex string on repeated runs or across brute-force and LSH paths.
+# lru_cache is not thread-safe under heavy parallel load; two threads can race
+# on the same key.
+#
+# At 500k+ images, a single global lock becomes a bottleneck as many threads
+# contend on every hash lookup.  Partitioning into 16 buckets (keyed by the
+# first hex character) reduces average contention to 1/16 with no extra memory.
+_PHASH_BUCKETS = 16
+_phash_caches: list[dict[str, Any]] = [{} for _ in range(_PHASH_BUCKETS)]
+_phash_locks: list[threading.Lock] = [threading.Lock() for _ in range(_PHASH_BUCKETS)]
+
+
 def _parse_phash(hex_str: str):
     """Parse a hex perceptual hash string to an imagehash object (cached)."""
-    return imagehash.hex_to_hash(hex_str)
+    bucket = int(hex_str[0], 16) if hex_str else 0
+    cache = _phash_caches[bucket]
+    lock = _phash_locks[bucket]
+    with lock:
+        if hex_str not in cache:
+            cache[hex_str] = imagehash.hex_to_hash(hex_str)
+        return cache[hex_str]
+
+
+class _UnionFind:
+    """
+    Union-Find with path compression and union-by-rank.
+
+    Single shared implementation used by brute-force, LSH, and group-collection
+    paths — replaces three divergent local definitions that existed previously.
+    """
+    __slots__ = ('parent', 'rank')
+
+    def __init__(self, n: int) -> None:
+        self.parent = list(range(n))
+        self.rank = [0] * n
+
+    def find(self, x: int) -> int:
+        if self.parent[x] != x:
+            self.parent[x] = self.find(self.parent[x])  # path compression
+        return self.parent[x]
+
+    def union(self, x: int, y: int) -> None:
+        px, py = self.find(x), self.find(y)
+        if px == py:
+            return
+        if self.rank[px] < self.rank[py]:
+            self.parent[px] = py
+        elif self.rank[px] > self.rank[py]:
+            self.parent[py] = px
+        else:
+            self.parent[py] = px
+            self.rank[px] += 1
+
+    def connected(self, x: int, y: int) -> bool:
+        return self.find(x) == self.find(y)
 
 
 def find_exact_duplicates(
@@ -139,35 +189,17 @@ def _find_perceptual_duplicates_bruteforce(
 
     Best for small collections (< 5000 images).
     """
-    # B2: Use cached hash parser
+    # B2: Use thread-safe cached hash parser
     parsed_hashes = []
     for img in candidates:
         try:
             parsed_hashes.append(_parse_phash(img.perceptual_hash))
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Failed to parse hash for {img.path}: {e}")
             parsed_hashes.append(None)
 
-    # Union-Find for efficient grouping
-    parent = list(range(len(candidates)))
-    # B1: union-by-rank to keep tree height O(log n)
-    rank = [0] * len(candidates)
-
-    def find(x: int) -> int:
-        if parent[x] != x:
-            parent[x] = find(parent[x])  # Path compression
-        return parent[x]
-
-    def union(x: int, y: int) -> None:
-        px, py = find(x), find(y)
-        if px != py:
-            # B1: union by rank
-            if rank[px] < rank[py]:
-                parent[px] = py
-            elif rank[px] > rank[py]:
-                parent[py] = px
-            else:
-                parent[py] = px
-                rank[px] += 1
+    # Union-Find for efficient grouping (shared _UnionFind helper)
+    uf = _UnionFind(len(candidates))
 
     # Compare all pairs O(n^2)
     total_comparisons = (len(candidates) * (len(candidates) - 1)) // 2
@@ -188,7 +220,7 @@ def _find_perceptual_duplicates_bruteforce(
             if parsed_hashes[i] is not None and parsed_hashes[j] is not None:
                 distance = parsed_hashes[i] - parsed_hashes[j]
                 if distance <= threshold:
-                    union(i, j)
+                    uf.union(i, j)
 
             comparison_count += 1
             pbar_pending += 1
@@ -219,7 +251,7 @@ def _find_perceptual_duplicates_bruteforce(
         progress_callback(comparison_count, total_comparisons)
 
     # Collect groups
-    return _collect_duplicate_groups(candidates, parent, start_id)
+    return _collect_duplicate_groups(candidates, uf, start_id)
 
 
 def _find_perceptual_duplicates_lsh(
@@ -238,12 +270,13 @@ def _find_perceptual_duplicates_lsh(
     """
     n = len(candidates)
 
-    # B2: Use cached hash parser
+    # B2: Use thread-safe cached hash parser
     parsed_hashes = []
     for img in candidates:
         try:
             parsed_hashes.append(_parse_phash(img.perceptual_hash))
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Failed to parse hash for {img.path}: {e}")
             parsed_hashes.append(None)
 
     # Calculate optimal LSH parameters based on collection size
@@ -276,26 +309,8 @@ def _find_perceptual_duplicates_lsh(
     if pbar_build is not None:
         pbar_build.close()
 
-    # Union-Find for grouping (defined early so we can use it for deduplication)
-    parent = list(range(len(candidates)))
-    rank = [0] * len(candidates)  # Union by rank for better performance
-
-    def find(x: int) -> int:
-        if parent[x] != x:
-            parent[x] = find(parent[x])
-        return parent[x]
-
-    def union(x: int, y: int) -> None:
-        px, py = find(x), find(y)
-        if px != py:
-            # Union by rank
-            if rank[px] < rank[py]:
-                parent[px] = py
-            elif rank[px] > rank[py]:
-                parent[py] = px
-            else:
-                parent[py] = px
-                rank[px] += 1
+    # Union-Find for grouping (shared _UnionFind helper)
+    uf = _UnionFind(n)
 
     # Estimate candidate pairs for progress reporting (without materializing)
     estimated_candidates = lsh.estimate_candidate_pairs()
@@ -334,7 +349,7 @@ def _find_perceptual_duplicates_lsh(
 
         # Skip if already in the same group (handles table-collision duplicates
         # when lsh_deduplicate=False, and provides a safety net otherwise)
-        if find(i) == find(j):
+        if uf.connected(i, j):
             # B3: still throttle pbar for skipped pairs
             if pbar is not None:
                 now = time.monotonic()
@@ -349,7 +364,7 @@ def _find_perceptual_duplicates_lsh(
             actual_comparisons += 1
 
             if distance <= threshold:
-                union(i, j)
+                uf.union(i, j)
                 matches_found += 1
 
         # B3: throttle tqdm updates
@@ -384,35 +399,22 @@ def _find_perceptual_duplicates_lsh(
         )
 
     # Collect groups
-    return _collect_duplicate_groups(candidates, parent, start_id)
+    return _collect_duplicate_groups(candidates, uf, start_id)
 
 
 def _collect_duplicate_groups(
     candidates: list[ImageInfo],
-    parent: list[int],
+    uf: _UnionFind,
     start_id: int,
 ) -> list[DuplicateGroup]:
     """
-    Collect duplicate groups from Union-Find parent array.
+    Collect duplicate groups from a _UnionFind structure.
 
     Helper function shared by brute-force and LSH implementations.
     """
-    # Find with path compression
-    def find(x: int) -> int:
-        root = x
-        while parent[root] != root:
-            root = parent[root]
-        # Path compression
-        while parent[x] != root:
-            next_x = parent[x]
-            parent[x] = root
-            x = next_x
-        return root
-
-    # Collect groups
     groups: dict[int, list[ImageInfo]] = defaultdict(list)
     for i, img in enumerate(candidates):
-        root = find(i)
+        root = uf.find(i)
         groups[root].append(img)
 
     # Filter to only duplicates and create DuplicateGroup objects

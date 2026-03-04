@@ -148,13 +148,16 @@ class MaintenanceOperations:
 
     def vacuum(self):
         """Compact the database file."""
+        conn = None
         try:
             # VACUUM must run outside a transaction
             conn = sqlite3.connect(self.conn_mgr.db_path, timeout=30.0)
             conn.execute("VACUUM")
-            conn.close()
         except Exception as e:
             logger.debug(f"Failed to vacuum database: {e}")
+        finally:
+            if conn is not None:
+                conn.close()
 
 
 __all__ = ['MaintenanceOperations']

@@ -135,18 +135,24 @@ def convert_to_jpg_single(
         - Generates unique filenames to avoid conflicts
     """
     try:
-        img = Image.open(image_path)
-
-        # Handle transparency / palette modes
-        if img.mode in ('RGBA', 'LA', 'P'):
-            background = Image.new('RGB', img.size, (255, 255, 255))
-            if img.mode == 'P':
-                img = img.convert('RGBA')
-            alpha = img.split()[-1] if img.mode in ('RGBA', 'LA') else None
-            background.paste(img, mask=alpha)
-            img = background
-        elif img.mode != 'RGB':
-            img = img.convert('RGB')
+        # Use context manager so the file handle is released even if an
+        # exception occurs or if the original is deleted afterwards.
+        # On Windows, an unclosed PIL image holds a file lock that prevents
+        # the source file from being moved or deleted.
+        with Image.open(image_path) as _src:
+            # Handle transparency / palette modes.  _src may be reassigned to
+            # an in-memory copy; the context manager still closes the original.
+            if _src.mode in ('RGBA', 'LA', 'P'):
+                background = Image.new('RGB', _src.size, (255, 255, 255))
+                if _src.mode == 'P':
+                    _src = _src.convert('RGBA')
+                alpha = _src.split()[-1] if _src.mode in ('RGBA', 'LA') else None
+                background.paste(_src, mask=alpha)
+                img = background
+            elif _src.mode != 'RGB':
+                img = _src.convert('RGB')
+            else:
+                img = _src.copy()
 
         # Generate unique output filename
         new_path = image_path.with_suffix('.jpg')

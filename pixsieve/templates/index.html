@@ -306,15 +306,30 @@
                 </select>
             </div>
             
+            <div class="view-toggle">
+                <button class="view-btn active" id="viewBtnGrid" data-view="grid" onclick="setView('grid')" title="Grid View">⊞ Grid</button>
+                <button class="view-btn" id="viewBtnList" data-view="list" onclick="setView('list')" title="List View">☰ List</button>
+                <button class="view-btn" id="viewBtnCompare" data-view="compare" onclick="setView('compare')" title="Compare">⊟ Compare</button>
+            </div>
+
             <div class="pagination">
                 <button onclick="prevPage()" id="prevBtn">← Prev</button>
                 <span id="pageInfo">Page 1 of 1</span>
                 <button onclick="nextPage()" id="nextBtn">Next →</button>
+                <button class="show-all-btn" id="showAllBtnTop" onclick="toggleShowAll()">Show All</button>
             </div>
         </div>
-        
+
         <!-- Groups Container -->
         <div class="groups-container" id="groupsContainer"></div>
+
+        <!-- Bottom Pagination -->
+        <div class="pagination-bottom" id="paginationBottom">
+            <button onclick="prevPage()" id="prevBtnBottom">← Prev</button>
+            <span id="pageInfoBottom">Page 1 of 1</span>
+            <button onclick="nextPage()" id="nextBtnBottom">Next →</button>
+            <button class="show-all-btn" id="showAllBtn" onclick="toggleShowAll()">Show All</button>
+        </div>
         
         <!-- Error Images Section -->
         <div class="error-section" id="errorSection">
