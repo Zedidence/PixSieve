@@ -6,7 +6,12 @@ import pytest
 from pathlib import Path
 from PIL import Image
 
-from pixsieve.operations.sort import sort_alphabetical, ColorImageSorter
+from pixsieve.operations.sort import sort_alphabetical, ColorImageSorter, sort_by_resolution
+from pixsieve.scanner.dependencies import HAS_VIDEO_SUPPORT
+
+requires_video = pytest.mark.skipif(
+    not HAS_VIDEO_SUPPORT, reason="opencv-python-headless not installed"
+)
 
 
 class TestSortAlphabetical:
@@ -166,3 +171,74 @@ class TestColorImageSorterSortByColorBW:
         assert 'color' in stats
         assert 'bw' in stats
         assert 'skipped' in stats
+
+
+class TestSortByResolution:
+    """Test sort_by_resolution function."""
+
+    def test_default_excludes_video(self, temp_dir, make_video_clip):
+        """Without include_videos, video files are ignored entirely."""
+        Image.new('RGB', (1920, 1080), 'red').save(temp_dir / "photo.jpg", 'JPEG')
+        make_video_clip(temp_dir / "clip.mp4")
+
+        stats = sort_by_resolution(temp_dir, dry_run=True)
+        assert stats['processed'] == 1  # only the image
+
+    def test_dry_run_categorizes_image_by_resolution(self, temp_dir):
+        Image.new('RGB', (1920, 1080), 'red').save(temp_dir / "hd.jpg", 'JPEG')
+        stats = sort_by_resolution(temp_dir, dry_run=True)
+        assert stats['processed'] == 1
+        assert 'hd/landscape' in stats['by_category']
+
+    @requires_video
+    def test_include_videos_categorizes_video_by_resolution(self, temp_dir, make_video_clip):
+        """A video included via include_videos gets its dimensions read via
+        OpenCV (not PIL) and is sorted into the matching category."""
+        make_video_clip(temp_dir / "clip.mp4", size=(1920, 1080))
+
+        stats = sort_by_resolution(temp_dir, dry_run=True, include_videos=True)
+        assert stats['processed'] == 1
+        assert stats['skipped'] == 0
+        assert 'hd/landscape' in stats['by_category']
+
+    @requires_video
+    def test_actual_move_places_video_in_category_folder(self, temp_dir, make_video_clip):
+        clip = make_video_clip(temp_dir / "clip.mp4", size=(640, 480))
+
+        stats = sort_by_resolution(temp_dir, dry_run=False, include_videos=True)
+        assert stats['processed'] == 1
+        assert not clip.exists()
+        assert (temp_dir / "sorted_by_resolution" / "medium" / "landscape" / "clip.mp4").exists()
+
+
+class TestColorImageSorterVideoSupport:
+    """ColorImageSorter with include_videos=True extracts a representative
+    frame via OpenCV instead of opening the file with PIL."""
+
+    @requires_video
+    def test_get_image_files_includes_video_when_enabled(self, temp_dir, make_video_clip):
+        Image.new('RGB', (10, 10), 'red').save(temp_dir / "a.jpg", 'JPEG')
+        make_video_clip(temp_dir / "clip.mp4")
+
+        sorter = ColorImageSorter(temp_dir, include_videos=True)
+        names = {f.name for f in sorter.get_image_files()}
+        assert 'clip.mp4' in names
+
+    def test_get_image_files_excludes_video_by_default(self, temp_dir, make_video_clip):
+        make_video_clip(temp_dir / "clip.mp4")
+        sorter = ColorImageSorter(temp_dir)
+        names = {f.name for f in sorter.get_image_files()}
+        assert 'clip.mp4' not in names
+
+    @requires_video
+    def test_get_dominant_color_reads_video_frame(self, temp_dir, make_video_clip):
+        clip = make_video_clip(temp_dir / "clip.mp4", color=(255, 0, 0))  # BGR red-ish
+        sorter = ColorImageSorter(temp_dir, include_videos=True, use_cache=False)
+        color = sorter.get_dominant_color(clip)
+        assert color is not None
+
+    @requires_video
+    def test_is_grayscale_reads_video_frame(self, temp_dir, make_video_clip):
+        clip = make_video_clip(temp_dir / "clip.mp4", color=(128, 128, 128))
+        sorter = ColorImageSorter(temp_dir, include_videos=True)
+        assert sorter.is_grayscale(clip)

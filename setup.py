@@ -37,7 +37,11 @@ setup(
     packages=find_packages(),
     include_package_data=True,
     package_data={
-        "pixsieve": ["templates/*.html"],
+        "pixsieve": [
+            "templates/*.html",
+            "static/css/*.css",
+            "static/js/*.js",
+        ],
     },
     python_requires=">=3.9",
     install_requires=[
@@ -49,11 +53,20 @@ setup(
         "scikit-learn>=1.0.0",  # K-means clustering for color sorting
         "piexif>=1.0.0",        # EXIF metadata manipulation
         "tqdm>=4.0.0",          # Progress bars
+        "pydantic>=2.0.0",      # Request validation schemas
+        "flasgger>=0.9.7",      # OpenAPI/Swagger UI
     ],
     extras_require={
         "dev": [
             "pytest>=7.0.0",
             "pytest-cov>=4.0.0",
+        ],
+        "e2e": [
+            "playwright>=1.40.0",
+            "pytest-playwright>=0.4.0",
+        ],
+        "video": [
+            "opencv-python-headless>=4.5.0",
         ],
     },
     entry_points={

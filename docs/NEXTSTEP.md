@@ -1,158 +1,60 @@
 # Next Steps — Known Bugs & Performance Issues
 
-Issues identified by static analysis. Ordered by priority.
+Issues originally identified by static analysis. Verified against the current codebase on 2026-09-05 — **14 of the 15 items below are already fixed**; only item 8 remains open.
 
 ---
 
-## Critical
+## Resolved
 
-### 1. Lock scope too narrow in `repair.py` — Race condition
-**File**: `pixsieve/operations/repair.py:192-200`
+### 1. ~~Lock scope too narrow in `repair.py` — Race condition~~ ✅ Fixed
+`_repair_lock` now wraps the entire `Image.open()` + `img.copy()` block in every repair strategy (`pixsieve/operations/repair.py`), not just the `LOAD_TRUNCATED_IMAGES` toggle.
 
-`_repair_lock` is acquired only to toggle `ImageFile.LOAD_TRUNCATED_IMAGES`, but the actual `Image.open()` call happens outside the lock. Another thread can flip the flag between the toggle and the open.
+### 2. ~~Unclosed DB connection in `maintenance.py` — Resource leak~~ ✅ Fixed
+`vacuum()` (`pixsieve/database/maintenance.py:149-160`) now wraps the connection in try/finally.
 
-**Fix**: Extend the lock to cover the entire `Image.open()` + `img.copy()` block.
+### 3. ~~Thread-unsafe LRU cache on `_parse_phash`~~ ✅ Fixed
+Replaced with a 16-bucket dict cache, each bucket guarded by its own `threading.Lock` (`pixsieve/scanner/deduplication.py`), reducing contention to ~1/16 instead of a single global lock.
 
-```python
-with _repair_lock:
-    old_setting = ImageFile.LOAD_TRUNCATED_IMAGES
-    ImageFile.LOAD_TRUNCATED_IMAGES = True
-    try:
-        with Image.open(path) as img:
-            img_copy = img.copy()
-            fmt = img.format or "JPEG"
-    finally:
-        ImageFile.LOAD_TRUNCATED_IMAGES = old_setting
-```
+### 4. ~~Full image load for truncation detection~~ ✅ Fixed
+`analysis.py` now uses `img.verify()` for the non-phash path and relies on `thumbnail()`'s partial decode (which naturally raises on truncated files) for the phash path — no more forced full-resolution `img.load()`.
 
----
+### 5. ~~No pre-downscaling before perceptual hashing~~ ✅ Fixed
+`hashing.py` now calls `img.thumbnail((256, 256), Image.Resampling.LANCZOS)` before hashing.
 
-### 2. Unclosed DB connection in `maintenance.py` — Resource leak
-**File**: `pixsieve/database/maintenance.py:153-155`
+### 6. ~~Color sort resize is too large (150×150)~~ ✅ Fixed
+`sort.py` now uses a 32×32 thumbnail for dominant-color/grayscale analysis.
 
-`vacuum()` opens a raw `sqlite3.connect()` with no try/finally. If `VACUUM` raises, the connection leaks.
+### 7. ~~N+1 `set_dominant_color` updates~~ ✅ Fixed
+The sort call site now uses `set_dominant_color_batch()`, which issues a single `executemany` instead of one write per image.
 
-**Fix**: Wrap in try/finally or a context manager.
+### 9. ~~CMYK→RGB conversion without color profile~~ ✅ Fixed
+`hashing.py`'s `_ensure_phash_mode()` now special-cases CMYK: `ImageOps.invert(img).convert('RGB')` instead of a raw `convert('RGB')`, which was producing inverted colors on print-origin JPEGs.
 
----
+### 10. ~~Unclosed PIL `Image` in `convert.py` — Windows file lock~~ ✅ Fixed
+Both `Image.open()` call sites in `convert.py` now use a `with` context manager.
 
-### 3. Thread-unsafe LRU cache on `_parse_phash`
-**File**: `pixsieve/scanner/deduplication.py:24-27`
+### 11. ~~Silent exception swallow in perceptual hash parsing~~ ✅ Fixed
+Both parse sites in `deduplication.py` now log `logger.debug(f"Failed to parse hash for {img.path}: {e}")` before appending `None`.
 
-`@lru_cache(maxsize=None)` on `_parse_phash()` is not thread-safe under heavy parallel load. Multiple threads can race on identical hash strings.
+### 12. ~~Inconsistent Union-Find implementation~~ ✅ Fixed
+A single shared `_UnionFind` class (path compression + union-by-rank) is now used by both the brute-force and LSH paths.
 
-**Fix**: Wrap cache reads/writes with a `threading.Lock`, or replace with a thread-safe dict.
+### 13. ~~Broken symlink crash~~ ✅ Fixed
+`file_discovery.py` catches `OSError` from `filepath.resolve()` and falls back to `filepath.absolute()`.
 
----
+### 14. ~~EXIF date encoded as UTF-8 instead of ASCII~~ ✅ Fixed
+`metadata.py` now uses `.encode('ascii')` for EXIF date strings, per the EXIF spec.
 
-## Major Performance
-
-### 4. Full image load for truncation detection
-**File**: `pixsieve/scanner/analysis.py:63-75`
-
-`img.load()` forces the entire pixel buffer into RAM just to detect truncation. A 100MP image = 400MB+ unnecessarily allocated.
-
-**Fix**: Use `img.verify()` instead — it validates image structure without materializing pixels.
+### 15. ~~Decompression bomb risk from raised pixel limit~~ ✅ Fixed
+`MAX_IMAGE_PIXELS` is now configurable via the `PIXSIEVE_MAX_IMAGE_PIXELS` environment variable (`config.py`). It's still applied globally rather than scoped to a context manager — a deliberate tradeoff documented in `scanner/dependencies.py`: scoping it would require a lock around every `Image.open()` call, serializing the `ThreadPoolExecutor` and defeating parallelism.
 
 ---
 
-### 5. No pre-downscaling before perceptual hashing
-**File**: `pixsieve/scanner/hashing.py:68-84`
-
-pHash is computed on the full-resolution image. The hash is effectively identical whether computed on the original or a 256×256 thumbnail, but the memory and CPU cost differs by orders of magnitude.
-
-**Fix**: Add `img.thumbnail((256, 256), Image.Resampling.LANCZOS)` before calling the hash function.
-
----
-
-### 6. Color sort resize is too large (150×150)
-**File**: `pixsieve/operations/sort.py:193-196`
-
-`get_dominant_color()` resizes every image to 150×150 before K-means. A 32×32 thumbnail is statistically sufficient for dominant color extraction and is ~22× less data.
-
-**Fix**: Replace `img.resize((150, 150))` with `img.thumbnail((32, 32), Image.Resampling.LANCZOS)`.
-
----
-
-### 7. N+1 `set_dominant_color` updates
-**File**: `pixsieve/database/operations.py:231-255`
-
-Called per-image in a loop from the sort operation. ~~Each call triggers an individual `UPDATE` transaction with a separate write lock.~~
-
-**Partial fix (F1)**: `set_dominant_color()` is now async — calls are enqueued to the background writer and batched into a single transaction per drain cycle, so no write locks are held by the caller. The N+1 issue at the call site still exists but no longer causes lock contention.
-
-**Remaining fix**: Collect `(color, path)` pairs and flush with a single `executemany` to reduce round-trips to the background writer queue.
-
----
+## Still Open
 
 ### 8. Chunked file discovery is immediately flattened
-**File**: `pixsieve/scanner/file_discovery.py:86-112`
+**File**: `pixsieve/scanner/file_discovery.py`
 
-`iter_image_chunks()` lazily yields chunks, but `find_image_files()` immediately calls `images.extend(chunk)` in a loop, collapsing everything into one list and defeating the chunking mechanism.
+`find_image_files()` / `find_image_files_multi()` still call `images.extend(chunk)` in a loop over the chunked generators (`iter_image_chunks()` / `iter_image_chunks_multi()`), collapsing everything into one in-memory list. The streaming generators exist and are used directly elsewhere in the codebase, but these two convenience functions still defeat their own chunking. Low priority — the memory cost is only paid at very large (500K+) file counts, and callers that care can use the generator functions directly instead.
 
-**Fix**: Either keep the result as a generator throughout, or document the memory cost explicitly.
-
----
-
-### 9. CMYK→RGB conversion without color profile
-**File**: `pixsieve/scanner/hashing.py:20-29`
-
-`_ensure_phash_mode()` does a raw `img.convert('RGB')` on CMYK images. Without an ICC profile, CMYK→RGB produces incorrect (often inverted) colors. This generates wrong perceptual hashes for CMYK images, which are common in print-origin JPEGs.
-
-**Fix**: Use a profile-aware conversion or explicitly handle CMYK as a special case before hashing.
-
----
-
-### 10. Unclosed PIL `Image` in `convert.py` — Windows file lock
-**File**: `pixsieve/operations/convert.py:137-171`
-
-`Image.open()` is never explicitly closed. On Windows, this holds a file lock and prevents the original from being moved or deleted afterward.
-
-**Fix**: Wrap with `with Image.open(path) as img:` or call `img.close()` in a finally block.
-
----
-
-## Bugs
-
-### 11. Silent exception swallow in perceptual hash parsing
-**File**: `pixsieve/scanner/deduplication.py:147-148`
-
-`except Exception: parsed_hashes.append(None)` produces no log output. Corrupted hash strings fail invisibly, silently skipping comparisons with no indication of how many were affected.
-
-**Fix**: Add `logger.debug(f"Failed to parse hash for {img.path}: {e}")` inside the except block.
-
----
-
-### 12. Inconsistent Union-Find implementation
-**File**: `pixsieve/scanner/deduplication.py:400-410`
-
-`_collect_duplicate_groups` defines a local `find()` that does path compression but not union-by-rank, while the brute-force and LSH paths use a full union-by-rank implementation. Inconsistent and redundant.
-
-**Fix**: Extract Union-Find into a shared helper and use it everywhere.
-
----
-
-### 13. Broken symlink crash
-**File**: `pixsieve/scanner/file_discovery.py:64-72`
-
-`filepath.resolve()` raises `OSError` on broken symlinks in Python 3.10+, crashing the scan silently or noisily depending on where the exception is caught.
-
-**Fix**: Catch `OSError` and fall back to `filepath.absolute()`.
-
----
-
-### 14. EXIF date encoded as UTF-8 instead of ASCII
-**File**: `pixsieve/operations/metadata.py:90`
-
-EXIF spec requires 7-bit ASCII for date strings. `.encode('utf-8')` is technically incorrect even though the date format only produces ASCII characters. Strict EXIF readers may reject it.
-
-**Fix**: Change to `.encode('ascii')`.
-
----
-
-### 15. Decompression bomb risk from raised pixel limit
-**File**: `pixsieve/config.py:64-67`
-
-PIL's default `MAX_IMAGE_PIXELS` (~89MP) is intentionally conservative. It's raised globally to 500MP, meaning a malicious or malformed JPEG could consume gigabytes during decompression in any context.
-
-**Fix**: Apply the higher limit only within a context manager scoped to trusted analysis paths, not as a global module-level override.
+**Fix**: Either have these functions return the generator directly (breaking their current list-returning signature), or document the memory tradeoff explicitly in their docstrings so callers know to prefer the streaming variants for huge collections.

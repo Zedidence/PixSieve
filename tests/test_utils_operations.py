@@ -62,6 +62,15 @@ class TestSanitizeFilename:
         assert '?' not in result
         assert '*' not in result
 
+    def test_removes_control_characters(self):
+        """ASCII control characters (e.g. a literal tab/NUL byte) are also
+        replaced, matching api/schemas.py's RenameImageRequest validator --
+        these used to be two independently-maintained character sets that
+        had drifted (this one used to omit control characters)."""
+        result = sanitize_filename("file\tname\x00.jpg")
+        assert '\t' not in result
+        assert '\x00' not in result
+
     def test_reserved_name_prefixed(self):
         """Windows reserved names get underscore prefix."""
         result = sanitize_filename("CON")

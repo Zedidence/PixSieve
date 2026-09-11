@@ -18,7 +18,10 @@ Thank you for considering contributing to PixSieve! This document provides guide
 
 3. **Install in development mode**
    ```bash
-   pip install -e ".[dev,progress]"
+   pip install -e ".[dev]"
+
+   # Add e2e and/or video extras if you're working on those areas:
+   pip install -e ".[dev,e2e,video]"
    ```
 
 4. **Run tests**

@@ -64,6 +64,22 @@ try:
 except ImportError:
     pass
 
+# Optional: opencv for video frame extraction / metadata probing.
+# Store as Optional[Any] to satisfy type checkers when opencv is not installed.
+HAS_VIDEO_SUPPORT = False
+cv2: Optional[Any] = None
+
+try:
+    import cv2 as _cv2_import
+    HAS_VIDEO_SUPPORT = True
+    cv2 = _cv2_import
+    _logger.debug("Video support enabled via opencv-python-headless")
+except ImportError:
+    _logger.warning(
+        "opencv-python-headless not installed - video files will not be processed. "
+        "Install with: pip install opencv-python-headless (or pip install pixsieve[video])"
+    )
+
 
 __all__ = [
     'Image',
@@ -71,5 +87,7 @@ __all__ = [
     'HAS_HEIF_SUPPORT',
     'HAS_TQDM',
     '_tqdm_class',
+    'HAS_VIDEO_SUPPORT',
+    'cv2',
     '_logger',
 ]

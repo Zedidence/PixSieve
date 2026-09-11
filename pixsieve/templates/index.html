@@ -4,9 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PixSieve</title>
+    <meta name="description" content="Find and manage duplicate images with ease.">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x1F50D;</text></svg>">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=optional" rel="stylesheet">
     <link rel="stylesheet" href="/static/css/app.css">
 </head>
 <body>
@@ -20,24 +22,25 @@
         <header>
             <h1>🔍 PixSieve</h1>
             <p>Find and manage duplicate images with ease</p>
+            <button class="theme-toggle" data-action="toggle-theme" aria-label="Toggle light/dark theme" title="Toggle theme">🌙</button>
         </header>
 
         <!-- Tab Navigation -->
-        <div class="tab-nav">
-            <button class="tab-btn active" onclick="switchTab('duplicates')">Duplicate Finder</button>
-            <button class="tab-btn" onclick="switchTab('operations')">File Operations</button>
+        <div class="tab-nav" role="tablist">
+            <button class="tab-btn active" role="tab" aria-selected="true" data-tab="duplicates">Duplicate Finder</button>
+            <button class="tab-btn" role="tab" aria-selected="false" data-tab="operations">File Operations</button>
         </div>
 
         <!-- ==================== DUPLICATES TAB ==================== -->
-        <div class="tab-content active" id="tab-duplicates">
+        <div class="tab-content active" id="tab-duplicates" role="tabpanel">
 
         <!-- Session Recovery Banner -->
         <div class="recovery-banner" id="recoveryBanner">
             <h3>📂 Previous Session Found</h3>
             <p id="recoveryInfo">You have results from a previous scan. Would you like to restore them?</p>
             <div class="btn-group">
-                <button class="btn btn-primary btn-sm" onclick="restoreSession()">Restore Session</button>
-                <button class="btn btn-secondary btn-sm" onclick="dismissRecovery()">Start Fresh</button>
+                <button class="btn btn-primary btn-sm" data-action="restore-session">Restore Session</button>
+                <button class="btn btn-secondary btn-sm" data-action="dismiss-recovery">Start Fresh</button>
             </div>
         </div>
         
@@ -50,18 +53,20 @@
         
         <!-- Setup Panel -->
         <div class="setup-panel" id="setupPanel">
-            <div class="form-group">
-                <label for="directory">📁 Directory to Scan</label>
-                <input type="text" id="directory" placeholder="Enter full path (e.g., C:\Users\Photos or /home/user/photos)" 
-                       autocomplete="off" onfocus="showHistory()" oninput="filterHistory()">
-                <div class="autocomplete-list" id="historyList"></div>
+            <div class="form-group" id="scanFoldersSection">
+                <label>📁 Folders to Scan</label>
+                <div class="per-folder-list" id="scanFolderList"></div>
+                <div class="btn-group" style="margin-top:8px;">
+                    <button type="button" class="btn btn-secondary btn-sm" data-action="add-scan-folder">➕ Add Folder</button>
+                </div>
+                <small>Add one or more folders to scan. Optionally mark exactly one as the reference folder — its images are protected and can never be deleted.</small>
             </div>
-            
+
             <div class="form-row">
                 <div class="form-group">
                     <label for="threshold">🎯 Similarity Threshold</label>
                     <div class="range-container">
-                        <input type="range" id="threshold" min="0" max="64" value="10" oninput="updateThresholdDisplay()">
+                        <input type="range" id="threshold" min="0" max="64" value="10" aria-label="Similarity threshold">
                         <span class="range-value" id="thresholdValue">10</span>
                     </div>
                     <small>Lower = stricter matching (0-64). Recommended: 5-15</small>
@@ -84,11 +89,11 @@
                 <label>Detection Mode</label>
                 <div class="checkbox-group">
                     <label>
-                        <input type="checkbox" id="exactOnly" onchange="toggleDetectionMode('exact')">
+                        <input type="checkbox" id="exactOnly" data-detection="exact">
                         Exact matches only
                     </label>
                     <label>
-                        <input type="checkbox" id="perceptualOnly" onchange="toggleDetectionMode('perceptual')">
+                        <input type="checkbox" id="perceptualOnly" data-detection="perceptual">
                         Perceptual matches only
                     </label>
                 </div>
@@ -96,7 +101,7 @@
             
             <!-- Advanced Options -->
             <div class="advanced-options">
-                <div class="advanced-toggle" onclick="toggleAdvancedOptions()">
+                <div class="advanced-toggle" role="button" tabindex="0" aria-expanded="false" data-action="toggle-advanced">
                     <span class="arrow">▶</span>
                     <span>Advanced Options</span>
                 </div>
@@ -106,12 +111,12 @@
                         <div class="form-group">
                             <label for="workers">⚡ Worker Threads</label>
                             <div class="range-container">
-                                <input type="range" id="workers" min="1" max="16" value="4" oninput="updateWorkersDisplay()">
+                                <input type="range" id="workers" min="1" max="32" value="4" aria-label="Worker threads">
                                 <span class="range-value" id="workersValue">4</span>
                             </div>
-                            <small>More workers = faster analysis, more CPU usage</small>
+                            <small>More workers = faster analysis, more CPU usage. Left at the default, very large collections (100K+ images) automatically use more workers.</small>
                         </div>
-                        
+
                         <div class="form-group">
                             <label>🔧 Performance Options</label>
                             <div class="checkbox-group" style="flex-direction: column; gap: 10px;">
@@ -123,7 +128,17 @@
                                     <input type="checkbox" id="recursive" checked>
                                     Scan subdirectories
                                 </label>
+                                <label>
+                                    <input type="checkbox" id="resolveSymlinks" checked>
+                                    Resolve symlinks
+                                </label>
+                                <label>
+                                    <input type="checkbox" id="includeVideos">
+                                    Include videos
+                                </label>
                             </div>
+                            <small>Uncheck "Resolve symlinks" for a faster scan on drives with no symlinks - common for external/removable media, especially over USB.
+                            "Include videos" also scans/deduplicates video files (mp4, mov, avi, etc) - requires opencv-python-headless (pip install pixsieve[video]) and is slower than image-only scans.</small>
                         </div>
                     </div>
                     
@@ -155,13 +170,13 @@
             </div>
             
             <div class="btn-group" style="margin-top: 20px;">
-                <button class="btn btn-primary" id="scanBtn" onclick="startScan()">
+                <button class="btn btn-primary" id="scanBtn" data-action="start-scan" aria-label="Start scan">
                     🚀 Start Scan
                 </button>
             </div>
             
             <!-- Progress Section -->
-            <div class="progress-section" id="progressSection">
+            <div class="progress-section" id="progressSection" aria-live="polite" aria-atomic="false">
                 <!-- Thin Top Progress Bar -->
                 <div class="progress-top-bar">
                     <div class="progress-top-fill" id="progressTopFill"></div>
@@ -235,13 +250,13 @@
                 
                 <!-- Scan Controls -->
                 <div class="scan-controls">
-                    <button class="btn btn-warning btn-sm" id="pauseBtn" onclick="pauseScan()" style="display: none;">
+                    <button class="btn btn-warning btn-sm" id="pauseBtn" data-action="pause-scan" style="display: none;">
                         ⏸️ Pause
                     </button>
-                    <button class="btn btn-success btn-sm" id="resumeBtn" onclick="resumeScan()" style="display: none;">
+                    <button class="btn btn-success btn-sm" id="resumeBtn" data-action="resume-scan" style="display: none;">
                         ▶️ Resume
                     </button>
-                    <button class="btn btn-danger btn-sm" id="cancelBtn" onclick="cancelScan()">
+                    <button class="btn btn-danger btn-sm" id="cancelBtn" data-action="cancel-scan">
                         ✖️ Cancel Scan
                     </button>
                 </div>
@@ -271,33 +286,33 @@
                 <div class="stat-label">Failed to Analyze</div>
             </div>
             <div class="stat-item" style="margin-left: auto;">
-                <button class="btn btn-secondary btn-sm" onclick="newScan()">🔄 New Scan</button>
+                <button class="btn btn-secondary btn-sm" data-action="new-scan">🔄 New Scan</button>
             </div>
         </div>
         
         <!-- Cache Banner -->
         <div class="cache-banner" id="cacheBanner">
             <span id="cacheInfo">⚡ Cache: Loading...</span>
-            <button class="btn btn-sm" onclick="showCacheModal()" style="margin-left: 10px; padding: 4px 12px; background: #333;">Manage Cache</button>
+            <button class="btn btn-sm cache-manage-btn" data-action="show-cache-modal">Manage Cache</button>
         </div>
         
         <!-- Filter Bar -->
         <div class="filter-bar" id="filterBar">
-            <select id="filterType" onchange="applyFilters()">
+            <select id="filterType" aria-label="Filter groups by type">
                 <option value="all">All Groups</option>
                 <option value="exact">Exact Matches Only</option>
                 <option value="perceptual">Perceptual Matches Only</option>
             </select>
-            <select id="sortBy" onchange="applyFilters()">
+            <select id="sortBy" aria-label="Sort groups by">
                 <option value="savings">Sort by Savings (High to Low)</option>
                 <option value="count">Sort by Image Count</option>
                 <option value="id">Sort by Group ID</option>
             </select>
-            <input type="text" id="searchFilter" placeholder="Search by filename..." oninput="applyFilters()">
+            <input type="text" id="searchFilter" placeholder="Search by filename..." aria-label="Search by filename">
             
             <div class="strategy-selector">
                 <label for="strategySelect">Auto-select:</label>
-                <select id="strategySelect" onchange="applyStrategy()">
+                <select id="strategySelect" aria-label="Auto-select strategy">
                     <option value="quality">Highest Quality</option>
                     <option value="largest">Largest File</option>
                     <option value="smallest">Smallest File</option>
@@ -307,16 +322,16 @@
             </div>
             
             <div class="view-toggle">
-                <button class="view-btn active" id="viewBtnGrid" data-view="grid" onclick="setView('grid')" title="Grid View">⊞ Grid</button>
-                <button class="view-btn" id="viewBtnList" data-view="list" onclick="setView('list')" title="List View">☰ List</button>
-                <button class="view-btn" id="viewBtnCompare" data-view="compare" onclick="setView('compare')" title="Compare">⊟ Compare</button>
+                <button class="view-btn active" id="viewBtnGrid" data-view="grid" data-action="set-view" aria-pressed="true" title="Grid View">⊞ Grid</button>
+                <button class="view-btn" id="viewBtnList" data-view="list" data-action="set-view" aria-pressed="false" title="List View">☰ List</button>
+                <button class="view-btn" id="viewBtnCompare" data-view="compare" data-action="set-view" aria-pressed="false" title="Compare">⊟ Compare</button>
             </div>
 
             <div class="pagination">
-                <button onclick="prevPage()" id="prevBtn">← Prev</button>
+                <button id="prevBtn" data-action="prev-page" aria-label="Previous page">← Prev</button>
                 <span id="pageInfo">Page 1 of 1</span>
-                <button onclick="nextPage()" id="nextBtn">Next →</button>
-                <button class="show-all-btn" id="showAllBtnTop" onclick="toggleShowAll()">Show All</button>
+                <button id="nextBtn" data-action="next-page" aria-label="Next page">Next →</button>
+                <button class="show-all-btn" id="showAllBtnTop" data-action="toggle-show-all">Show All</button>
             </div>
         </div>
 
@@ -325,15 +340,15 @@
 
         <!-- Bottom Pagination -->
         <div class="pagination-bottom" id="paginationBottom">
-            <button onclick="prevPage()" id="prevBtnBottom">← Prev</button>
+            <button id="prevBtnBottom" data-action="prev-page" aria-label="Previous page">← Prev</button>
             <span id="pageInfoBottom">Page 1 of 1</span>
-            <button onclick="nextPage()" id="nextBtnBottom">Next →</button>
-            <button class="show-all-btn" id="showAllBtn" onclick="toggleShowAll()">Show All</button>
+            <button id="nextBtnBottom" data-action="next-page" aria-label="Next page">Next →</button>
+            <button class="show-all-btn" id="showAllBtn" data-action="toggle-show-all">Show All</button>
         </div>
         
         <!-- Error Images Section -->
         <div class="error-section" id="errorSection">
-            <div class="error-section-header" onclick="toggleErrorSection()">
+            <div class="error-section-header" role="button" tabindex="0" aria-expanded="true" data-action="toggle-errors">
                 <div class="error-section-title">
                     ⚠️ <span id="errorSectionCount">0</span> Images Could Not Be Analyzed
                 </div>
@@ -354,64 +369,80 @@
                 <span id="actionSavings" style="color: #888; margin-left: 10px;"></span>
             </div>
             <div class="action-buttons">
-                <button class="btn btn-secondary" onclick="resetSelections()">Reset All</button>
-                <button class="btn btn-secondary" onclick="exportSelections()">📋 Export List</button>
-                <button class="btn btn-danger" onclick="showDeleteModal()">🗑️ Move to Trash</button>
+                <button class="btn btn-secondary" data-action="reset-selections">Reset All</button>
+                <div class="export-dropdown">
+                    <button class="btn btn-secondary" data-action="toggle-export-menu" aria-haspopup="true" aria-expanded="false">📋 Export ▾</button>
+                    <div class="export-menu" id="exportMenu">
+                        <button data-action="export-txt">Text (.txt)</button>
+                        <button data-action="export-csv">CSV (.csv)</button>
+                        <button data-action="export-json">JSON (.json)</button>
+                        <button data-action="export-html">HTML Report</button>
+                    </div>
+                </div>
+                <div class="export-dropdown">
+                    <button class="btn btn-secondary" data-action="toggle-quickops-menu" aria-haspopup="true" aria-expanded="false">⚡ Quick Ops ▾</button>
+                    <div class="export-menu" id="quickOpsMenu">
+                        <button data-action="quickop-convert-jpg" title="Convert all marked-for-deletion files to JPG">Convert to JPG</button>
+                        <button data-action="quickop-move" title="Move all marked-for-deletion files to a directory">Move to Folder…</button>
+                    </div>
+                </div>
+                <button class="btn btn-danger" data-action="show-delete-modal">🗑️ Move to Trash</button>
             </div>
         </div>
 
         </div><!-- /tab-duplicates -->
 
         <!-- ==================== OPERATIONS TAB ==================== -->
-        <div class="tab-content" id="tab-operations">
+        <div class="tab-content" id="tab-operations" role="tabpanel">
             <div class="ops-grid">
                 <!-- Sidebar Navigation -->
                 <div class="ops-sidebar">
+                    {% macro video_badge(op) %}{% if video_support[op].support != 'none' %}<span class="video-badge" title="{{ video_support[op].note or 'Supports video files' }}">🎬</span>{% endif %}{% endmacro %}
                     <div class="ops-sidebar-section">ORGANIZE</div>
-                    <div class="ops-sidebar-item active" onclick="selectOperation('move-to-parent')">
-                        <span class="ops-icon">📂</span> Move to Parent
+                    <div class="ops-sidebar-item active" data-op="move-to-parent" role="button" tabindex="0">
+                        <span class="ops-icon">📂</span> Move to Parent {{ video_badge('move-to-parent') }}
                     </div>
-                    <div class="ops-sidebar-item" onclick="selectOperation('move')">
-                        <span class="ops-icon">📁</span> Move (Structured)
+                    <div class="ops-sidebar-item" data-op="move" role="button" tabindex="0">
+                        <span class="ops-icon">📁</span> Move (Structured) {{ video_badge('move') }}
                     </div>
                     <div class="ops-sidebar-section">TRANSFORM</div>
-                    <div class="ops-sidebar-item" onclick="selectOperation('rename-random')">
-                        <span class="ops-icon">🔀</span> Rename Random
+                    <div class="ops-sidebar-item" data-op="rename-random" role="button" tabindex="0">
+                        <span class="ops-icon">🔀</span> Rename Random {{ video_badge('rename-random') }}
                     </div>
-                    <div class="ops-sidebar-item" onclick="selectOperation('rename-parent')">
-                        <span class="ops-icon">🏷️</span> Rename by Parent
+                    <div class="ops-sidebar-item" data-op="rename-parent" role="button" tabindex="0">
+                        <span class="ops-icon">🏷️</span> Rename by Parent {{ video_badge('rename-parent') }}
                     </div>
-                    <div class="ops-sidebar-item" onclick="selectOperation('sort-alpha')">
-                        <span class="ops-icon">🔤</span> Sort Alphabetical
+                    <div class="ops-sidebar-item" data-op="sort-alpha" role="button" tabindex="0">
+                        <span class="ops-icon">🔤</span> Sort Alphabetical {{ video_badge('sort-alpha') }}
                     </div>
-                    <div class="ops-sidebar-item" onclick="selectOperation('sort-color')">
-                        <span class="ops-icon">🎨</span> Sort by Color
+                    <div class="ops-sidebar-item" data-op="sort-color" role="button" tabindex="0">
+                        <span class="ops-icon">🎨</span> Sort by Color {{ video_badge('sort-color') }}
                     </div>
-                    <div class="ops-sidebar-item" onclick="selectOperation('sort-resolution')">
-                        <span class="ops-icon">📐</span> Sort by Resolution
+                    <div class="ops-sidebar-item" data-op="sort-resolution" role="button" tabindex="0">
+                        <span class="ops-icon">📐</span> Sort by Resolution {{ video_badge('sort-resolution') }}
                     </div>
-                    <div class="ops-sidebar-item" onclick="selectOperation('fix-extensions')">
+                    <div class="ops-sidebar-item" data-op="fix-extensions" role="button" tabindex="0">
                         <span class="ops-icon">🔧</span> Fix Extensions
                     </div>
-                    <div class="ops-sidebar-item" onclick="selectOperation('convert')">
+                    <div class="ops-sidebar-item" data-op="convert" role="button" tabindex="0">
                         <span class="ops-icon">🖼️</span> Convert to JPG
                     </div>
                     <div class="ops-sidebar-section">METADATA</div>
-                    <div class="ops-sidebar-item" onclick="selectOperation('randomize-exif')">
-                        <span class="ops-icon">📅</span> Randomize EXIF
+                    <div class="ops-sidebar-item" data-op="randomize-dates" role="button" tabindex="0">
+                        <span class="ops-icon">📅</span> Randomize Dates {{ video_badge('randomize-dates') }}
                     </div>
-                    <div class="ops-sidebar-item" onclick="selectOperation('randomize-dates')">
-                        <span class="ops-icon">🕐</span> Randomize Dates
+                    <div class="ops-sidebar-item" data-op="strip-ratings" role="button" tabindex="0">
+                        <span class="ops-icon">⭐</span> Strip Favorite Ratings {{ video_badge('strip-ratings') }}
                     </div>
                     <div class="ops-sidebar-section">MAINTENANCE</div>
-                    <div class="ops-sidebar-item" onclick="selectOperation('cleanup')">
-                        <span class="ops-icon">🧹</span> Cleanup Empty
+                    <div class="ops-sidebar-item" data-op="cleanup" role="button" tabindex="0">
+                        <span class="ops-icon">🧹</span> Cleanup Empty {{ video_badge('cleanup') }}
                     </div>
-                    <div class="ops-sidebar-item" onclick="selectOperation('repair')">
+                    <div class="ops-sidebar-item" data-op="repair" role="button" tabindex="0">
                         <span class="ops-icon">🔍</span> Repair Corrupt
                     </div>
-                    <div class="ops-sidebar-item" onclick="selectOperation('pipeline')">
-                        <span class="ops-icon">⚡</span> Pipeline
+                    <div class="ops-sidebar-item" data-op="pipeline" role="button" tabindex="0">
+                        <span class="ops-icon">⚡</span> Pipeline {{ video_badge('pipeline') }}
                     </div>
                 </div>
 
@@ -462,8 +493,13 @@
                             <input type="text" id="mtpExtensions" placeholder="e.g., .jpg .png .gif (leave empty for all image types)">
                             <small>Space-separated list of extensions to include</small>
                         </div>
+                        <div class="form-group">
+                            <div class="checkbox-group">
+                                <label><input type="checkbox" id="mtpIncludeVideos"> Include videos</label>
+                            </div>
+                        </div>
                         <div class="ops-actions">
-                            <button class="btn btn-primary" onclick="runOperation('move-to-parent')">Run Move to Parent</button>
+                            <button class="btn btn-primary" data-run-op="move-to-parent">Run Move to Parent</button>
                         </div>
                     </div>
 
@@ -483,7 +519,7 @@
                             </div>
                         </div>
                         <div class="ops-actions">
-                            <button class="btn btn-primary" onclick="runOperation('move')">Run Move</button>
+                            <button class="btn btn-primary" data-run-op="move">Run Move</button>
                         </div>
                     </div>
 
@@ -506,10 +542,11 @@
                         <div class="form-group">
                             <div class="checkbox-group">
                                 <label><input type="checkbox" id="renameRecursive" checked> Search subdirectories</label>
+                                <label><input type="checkbox" id="renameIncludeVideos"> Include videos</label>
                             </div>
                         </div>
                         <div class="ops-actions">
-                            <button class="btn btn-primary" onclick="runOperation('rename-random')">Run Random Rename</button>
+                            <button class="btn btn-primary" data-run-op="rename-random">Run Random Rename</button>
                         </div>
                     </div>
 
@@ -520,7 +557,7 @@
                             <p>Rename files based on parent and grandparent folder names. Produces names like FolderName_SubFolder_1.jpg.</p>
                         </div>
                         <div class="ops-actions">
-                            <button class="btn btn-primary" onclick="runOperation('rename-parent')">Run Parent Rename</button>
+                            <button class="btn btn-primary" data-run-op="rename-parent">Run Parent Rename</button>
                         </div>
                     </div>
 
@@ -531,7 +568,7 @@
                             <p>Sort files into subfolders based on first character: A-G, H-N, O-T, U-Z, 0-9.</p>
                         </div>
                         <div class="ops-actions">
-                            <button class="btn btn-primary" onclick="runOperation('sort-alpha')">Run Alphabetical Sort</button>
+                            <button class="btn btn-primary" data-run-op="sort-alpha">Run Alphabetical Sort</button>
                         </div>
                     </div>
 
@@ -560,10 +597,12 @@
                         <div class="form-group">
                             <div class="checkbox-group">
                                 <label><input type="checkbox" id="colorCopy"> Copy files (instead of move)</label>
+                                <label><input type="checkbox" id="colorIncludeVideos"> Include videos</label>
                             </div>
+                            <small>For video files, a single representative frame is used for color analysis. Requires opencv-python-headless.</small>
                         </div>
                         <div class="ops-actions">
-                            <button class="btn btn-primary" onclick="runOperation('sort-color')">Run Color Sort</button>
+                            <button class="btn btn-primary" data-run-op="sort-color">Run Color Sort</button>
                         </div>
                     </div>
 
@@ -592,10 +631,12 @@
                         <div class="form-group">
                             <div class="checkbox-group">
                                 <label><input type="checkbox" id="resCopy"> Copy files (instead of move)</label>
+                                <label><input type="checkbox" id="resIncludeVideos"> Include videos</label>
                             </div>
+                            <small>Video dimensions are read via opencv-python-headless.</small>
                         </div>
                         <div class="ops-actions">
-                            <button class="btn btn-primary" onclick="runOperation('sort-resolution')">Run Resolution Sort</button>
+                            <button class="btn btn-primary" data-run-op="sort-resolution">Run Resolution Sort</button>
                         </div>
                     </div>
 
@@ -611,7 +652,7 @@
                             </div>
                         </div>
                         <div class="ops-actions">
-                            <button class="btn btn-primary" onclick="runOperation('fix-extensions')">Run Fix Extensions</button>
+                            <button class="btn btn-primary" data-run-op="fix-extensions">Run Fix Extensions</button>
                         </div>
                     </div>
 
@@ -625,7 +666,7 @@
                             <div class="form-group">
                                 <label for="convertQuality">JPG Quality</label>
                                 <div class="range-container">
-                                    <input type="range" id="convertQuality" min="1" max="100" value="95" oninput="document.getElementById('convertQualityVal').textContent=this.value">
+                                    <input type="range" id="convertQuality" min="1" max="100" value="95" data-output="convertQualityVal">
                                     <span class="range-value" id="convertQualityVal">95</span>
                                 </div>
                             </div>
@@ -637,59 +678,86 @@
                             </div>
                         </div>
                         <div class="ops-actions">
-                            <button class="btn btn-primary" onclick="runOperation('convert')">Run Convert</button>
+                            <button class="btn btn-primary" data-run-op="convert">Run Convert</button>
                         </div>
                     </div>
 
-                    <!-- ===== Randomize EXIF ===== -->
-                    <div class="ops-form" id="ops-randomize-exif">
-                        <div class="ops-header">
-                            <h3>Randomize EXIF Dates</h3>
-                            <p>Set random EXIF date metadata (Date Taken) for EXIF-compatible images (JPG, TIFF).</p>
-                        </div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="exifStartDate">Start Date</label>
-                                <input type="date" id="exifStartDate" value="2020-01-01">
-                            </div>
-                            <div class="form-group">
-                                <label for="exifEndDate">End Date</label>
-                                <input type="date" id="exifEndDate" value="2025-12-31">
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <div class="checkbox-group">
-                                <label><input type="checkbox" id="exifRecursive" checked> Search subdirectories</label>
-                            </div>
-                        </div>
-                        <div class="ops-actions">
-                            <button class="btn btn-primary" onclick="runOperation('randomize-exif')">Run Randomize EXIF</button>
-                        </div>
-                    </div>
-
-                    <!-- ===== Randomize File Dates ===== -->
+                    <!-- ===== Randomize Dates ===== -->
                     <div class="ops-form" id="ops-randomize-dates">
                         <div class="ops-header">
-                            <h3>Randomize File Dates</h3>
-                            <p>Set random file system timestamps (modified, accessed, created on Windows).</p>
-                        </div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="datesStartDate">Start Date</label>
-                                <input type="date" id="datesStartDate" value="2020-01-01">
-                            </div>
-                            <div class="form-group">
-                                <label for="datesEndDate">End Date</label>
-                                <input type="date" id="datesEndDate" value="2025-12-31">
-                            </div>
+                            <h3>Randomize Dates</h3>
+                            <p>Set random dates on all images: filesystem timestamps (modified/created) for every format, plus EXIF date metadata (Date Taken) for JPG and TIFF files.</p>
                         </div>
                         <div class="form-group">
                             <div class="checkbox-group">
-                                <label><input type="checkbox" id="datesRecursive" checked> Search subdirectories</label>
+                                <label><input type="checkbox" id="datesPerFolder" data-change="datesPerFolder"> Per-folder date ranges</label>
+                            </div>
+                        </div>
+                        <!-- Single-range mode (default) -->
+                        <div id="datesSingleMode">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="datesStartDate">Start Date</label>
+                                    <input type="date" id="datesStartDate" value="2020-01-01">
+                                </div>
+                                <div class="form-group">
+                                    <label for="datesEndDate">End Date</label>
+                                    <input type="date" id="datesEndDate" value="2025-12-31">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <div class="checkbox-group">
+                                    <label><input type="checkbox" id="datesRecursive" checked> Search subdirectories</label>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Per-folder mode -->
+                        <div id="datesPerFolderMode" style="display:none">
+                            <div class="form-group">
+                                <label>Default Date Range (applied to new folders)</label>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <input type="date" id="datesDefaultStart" value="2020-01-01">
+                                    </div>
+                                    <div class="form-group">
+                                        <input type="date" id="datesDefaultEnd" value="2025-12-31">
+                                    </div>
+                                </div>
+                            </div>
+                            <button class="btn btn-secondary" data-action="loadDatesFolders" style="margin-bottom:0.75rem">Load Child Folders</button>
+                            <div class="form-group autofill-row">
+                                <label for="datesAutoFillStart">Auto-fill start</label>
+                                <input type="date" id="datesAutoFillStart" value="2020-01-01">
+                                <button class="btn btn-secondary btn-sm" data-action="autoFillDates">Fill Monthly</button>
+                            </div>
+                            <div id="datesFolderList" class="per-folder-list"></div>
+                        </div>
+                        <div class="form-group">
+                            <div class="checkbox-group">
+                                <label><input type="checkbox" id="datesSyncExif" checked> Update EXIF date taken (JPG/TIFF)</label>
+                                <label><input type="checkbox" id="datesIncludeVideos"> Include videos</label>
+                            </div>
+                            <small class="video-support-note">{{ video_support['randomize-dates'].note }}</small>
+                        </div>
+                        <div class="ops-actions">
+                            <button class="btn btn-primary" data-run-op="randomize-dates">Run Randomize Dates</button>
+                        </div>
+                    </div>
+
+                    <!-- ===== Strip Favorite Ratings ===== -->
+                    <div class="ops-form" id="ops-strip-ratings">
+                        <div class="ops-header">
+                            <h3>Strip Favorite Ratings</h3>
+                            <p>Scan images for 5-star/favorite rating tags (Rating, RatingPercent, XMP:Rating, EXIF:Rating) via exiftool and remove them in place. Requires exiftool on PATH. This overwrites files with no backup (exiftool -overwrite_original) — dry-run first.</p>
+                        </div>
+                        <div class="form-group">
+                            <div class="checkbox-group">
+                                <label><input type="checkbox" id="ratingsRecursive" checked> Search subdirectories</label>
+                                <label><input type="checkbox" id="ratingsIncludeVideos"> Include videos</label>
                             </div>
                         </div>
                         <div class="ops-actions">
-                            <button class="btn btn-primary" onclick="runOperation('randomize-dates')">Run Randomize Dates</button>
+                            <button class="btn btn-primary" data-run-op="strip-ratings">Run Strip Ratings</button>
                         </div>
                     </div>
 
@@ -726,7 +794,7 @@
                             <small>Parallel scan threads (1–16). Lower for network drives.</small>
                         </div>
                         <div class="ops-actions">
-                            <button class="btn btn-primary" onclick="runOperation('repair')">Scan &amp; Repair</button>
+                            <button class="btn btn-primary" data-run-op="repair">Scan &amp; Repair</button>
                         </div>
                     </div>
 
@@ -737,7 +805,7 @@
                             <p>Recursively remove all empty directories under the target directory. The root itself is never deleted.</p>
                         </div>
                         <div class="ops-actions">
-                            <button class="btn btn-primary" onclick="runOperation('cleanup')">Run Cleanup</button>
+                            <button class="btn btn-primary" data-run-op="cleanup">Run Cleanup</button>
                         </div>
                     </div>
 
@@ -759,19 +827,15 @@
                                     <label for="pipeStep_convert_jpg">Convert PNG/BMP/WEBP to JPG</label>
                                 </div>
                                 <div class="pipeline-step-item">
-                                    <input type="checkbox" id="pipeStep_randomize_exif" value="randomize_exif">
-                                    <label for="pipeStep_randomize_exif">Randomize EXIF dates</label>
-                                </div>
-                                <div class="pipeline-step-item">
                                     <input type="checkbox" id="pipeStep_randomize_dates" value="randomize_dates">
-                                    <label for="pipeStep_randomize_dates">Randomize file system dates</label>
+                                    <label for="pipeStep_randomize_dates">Randomize dates (EXIF + filesystem)</label>
                                 </div>
                                 <div class="pipeline-step-item">
                                     <input type="checkbox" id="pipeStep_cleanup_empty" value="cleanup_empty">
                                     <label for="pipeStep_cleanup_empty">Delete empty folders</label>
                                 </div>
                                 <div class="pipeline-step-item">
-                                    <input type="checkbox" id="pipeStep_repair_corrupt" value="repair_corrupt" onchange="togglePipeTrashDir()">
+                                    <input type="checkbox" id="pipeStep_repair_corrupt" value="repair_corrupt" data-change="toggle-pipe-trash">
                                     <label for="pipeStep_repair_corrupt">Scan and repair corrupt images</label>
                                 </div>
                             </div>
@@ -803,8 +867,14 @@
                                 <small>For convert step</small>
                             </div>
                         </div>
+                        <div class="form-group">
+                            <div class="checkbox-group">
+                                <label><input type="checkbox" id="pipeIncludeVideos"> Include videos</label>
+                            </div>
+                            <small class="video-support-note">{{ video_support['pipeline'].note }}</small>
+                        </div>
                         <div class="ops-actions">
-                            <button class="btn btn-primary" onclick="runOperation('pipeline')">Run Pipeline</button>
+                            <button class="btn btn-primary" data-run-op="pipeline">Run Pipeline</button>
                         </div>
                     </div>
 
@@ -815,64 +885,159 @@
     </div>
 
     <!-- Undo Toast -->
-    <div class="undo-toast" id="undoToast">
+    <div class="undo-toast" id="undoToast" role="status" aria-live="polite">
         <span id="undoMessage">Selection changed</span>
-        <button class="btn btn-sm btn-primary" onclick="undoAction()">Undo</button>
+        <button class="btn btn-sm btn-primary" data-action="undo">Undo</button>
     </div>
     
     <!-- Delete Confirmation Modal -->
-    <div class="modal-overlay" id="deleteModal">
+    <div class="modal-overlay" id="deleteModal" role="dialog" aria-modal="true" aria-labelledby="deleteModalTitle">
         <div class="modal">
-            <h2>⚠️ Confirm Deletion</h2>
+            <h2 id="deleteModalTitle">⚠️ Confirm Deletion</h2>
             <p id="deleteModalText">Are you sure you want to move X files to the trash folder?</p>
             <div class="form-group">
                 <label for="trashDir">Trash Directory</label>
                 <input type="text" id="trashDir" placeholder="e.g., C:\Duplicates_Trash">
             </div>
+            <div class="ops-running" id="deleteProgress">
+                <div class="ops-run-header">
+                    <div class="ops-spinner"></div>
+                    <span id="deleteProgressLabel">Moving files...</span>
+                    <span class="ops-elapsed" id="deleteElapsed">0s</span>
+                </div>
+                <div class="ops-progress-bar">
+                    <div class="ops-progress-fill" id="deleteProgressFill"></div>
+                </div>
+                <div class="ops-progress-text" id="deleteProgressText"></div>
+            </div>
             <div class="modal-buttons">
-                <button class="btn btn-secondary" onclick="hideDeleteModal()">Cancel</button>
-                <button class="btn btn-danger" onclick="executeDelete()">Move to Trash</button>
+                <button class="btn btn-secondary" data-action="hide-delete-modal">Cancel</button>
+                <button class="btn btn-danger" data-action="execute-delete">Move to Trash</button>
             </div>
         </div>
     </div>
-    
-    <!-- Cache Management Modal -->
-    <div class="modal-overlay" id="cacheModal">
+
+    <!-- Rename Image Modal (lightbox F2) -->
+    <div class="modal-overlay" id="renameModal" role="dialog" aria-modal="true" aria-labelledby="renameModalTitle">
         <div class="modal">
-            <h2>📦 Cache Management</h2>
-            <p style="color: #888; margin-bottom: 20px;">
+            <h2 id="renameModalTitle">Rename File</h2>
+            <div class="form-group">
+                <label for="renameInput">File name</label>
+                <input type="text" id="renameInput" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="modal-buttons">
+                <button class="btn btn-secondary" data-action="hide-rename-modal">Cancel</button>
+                <button class="btn btn-primary" data-action="execute-rename">Rename</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cache Management Modal -->
+    <div class="modal-overlay" id="cacheModal" role="dialog" aria-modal="true" aria-labelledby="cacheModalTitle">
+        <div class="modal">
+            <h2 id="cacheModalTitle">📦 Cache Management</h2>
+            <p>
                 The cache stores analysis results to speed up re-scans of the same directories.
             </p>
-            <div style="background: #0f0f23; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-                <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                    <span style="color: #888;">Cached Images:</span>
-                    <span id="cacheModalEntries" style="color: #fff; font-weight: 600;">0</span>
+            <div class="cache-info-box">
+                <div class="cache-info-row">
+                    <span class="cache-info-label">Cached Images:</span>
+                    <span id="cacheModalEntries" class="cache-info-value">0</span>
                 </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                    <span style="color: #888;">Database Size:</span>
-                    <span id="cacheModalSize" style="color: #fff; font-weight: 600;">0 MB</span>
+                <div class="cache-info-row">
+                    <span class="cache-info-label">Database Size:</span>
+                    <span id="cacheModalSize" class="cache-info-value">0 MB</span>
                 </div>
-                <div style="display: flex; justify-content: space-between;">
-                    <span style="color: #888;">Location:</span>
-                    <span id="cacheModalPath" style="color: #666; font-size: 0.8rem; word-break: break-all;">~/.duplicate_finder_cache.db</span>
+                <div class="cache-info-row cache-info-row--last">
+                    <span class="cache-info-label">Location:</span>
+                    <span id="cacheModalPath" class="cache-info-value cache-info-value--path">~/.duplicate_finder_cache.db</span>
                 </div>
             </div>
             <div class="modal-buttons" style="flex-wrap: wrap; gap: 10px;">
-                <button class="btn btn-secondary" onclick="cleanupCache()">🗑️ Cleanup Old Entries</button>
-                <button class="btn btn-danger" onclick="clearCache()">💥 Clear All Cache</button>
-                <button class="btn btn-secondary" onclick="hideCacheModal()">Close</button>
+                <button class="btn btn-secondary" data-action="cleanup-cache">🗑️ Cleanup Old Entries</button>
+                <button class="btn btn-danger" data-action="clear-cache">💥 Clear All Cache</button>
+                <button class="btn btn-secondary" data-action="hide-cache-modal">Close</button>
             </div>
         </div>
     </div>
     
+    <!-- Auto-fill confirmation modal -->
+    <div class="modal-overlay" id="autoFillModal" role="dialog" aria-modal="true" aria-labelledby="autoFillModalTitle">
+        <div class="modal">
+            <h2 id="autoFillModalTitle">Confirm Monthly Date Ranges</h2>
+            <p>The following date ranges will be applied:</p>
+            <div id="autoFillPreview" class="autofill-preview"></div>
+            <div class="modal-buttons">
+                <button class="btn btn-secondary" data-action="hide-autofill-modal">Cancel</button>
+                <button class="btn btn-primary" data-action="confirm-autofill">Apply</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Lightbox -->
-    <div class="lightbox" id="lightbox">
-        <button class="lightbox-close" onclick="closeLightbox()">×</button>
-        <button class="lightbox-nav prev" onclick="lightboxPrev(event)">‹</button>
+    <div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="Image viewer">
+        <button class="lightbox-close" data-action="close-lightbox" aria-label="Close lightbox">×</button>
+        <button class="lightbox-nav prev" data-action="lightbox-prev" aria-label="Previous image">‹</button>
         <img id="lightboxImg" src="" alt="">
-        <button class="lightbox-nav next" onclick="lightboxNext(event)">›</button>
+        <video id="lightboxVideo" hidden controls preload="metadata"></video>
+        <canvas id="lightboxCropCanvas" class="lightbox-crop-canvas"></canvas>
+        <button class="lightbox-nav next" data-action="lightbox-next" aria-label="Next image">›</button>
+
+        <div class="lightbox-file-toolbar" id="lightboxFileToolbar">
+            <button class="lightbox-edit-btn" id="lightboxRenameBtn" data-action="open-rename-modal" title="Rename (F2)" aria-label="Rename image">✏️</button>
+            <button class="lightbox-edit-btn lightbox-edit-danger" data-action="lightbox-delete-current" title="Delete (Del)" aria-label="Delete image">🗑️</button>
+        </div>
+
+        <div class="lightbox-info" id="lightboxInfo"></div>
+
+        <div class="lightbox-edit-toolbar" id="lightboxEditToolbar">
+            <button class="lightbox-edit-btn" data-action="edit-rotate-left"  aria-label="Rotate left">⟲</button>
+            <button class="lightbox-edit-btn" data-action="edit-rotate-right" aria-label="Rotate right">⟳</button>
+            <button class="lightbox-edit-btn" data-action="edit-flip-h" aria-label="Flip horizontal">⇋</button>
+            <button class="lightbox-edit-btn" data-action="edit-flip-v" aria-label="Flip vertical">⇵</button>
+            <button class="lightbox-edit-btn" data-action="edit-crop" aria-label="Crop">Crop</button>
+            <span class="lightbox-edit-divider"></span>
+            <button class="lightbox-edit-btn" id="lightboxUndoBtn" data-action="edit-undo" aria-label="Undo" disabled>↶</button>
+            <button class="lightbox-edit-btn" id="lightboxRedoBtn" data-action="edit-redo" aria-label="Redo" disabled>↷</button>
+            <span class="lightbox-edit-spacer"></span>
+            <button class="lightbox-edit-btn" id="lightboxDiscardBtn" data-action="edit-discard" disabled>Discard</button>
+            <button class="lightbox-edit-btn lightbox-edit-save" id="lightboxSaveBtn" data-action="edit-save" disabled>Save</button>
+        </div>
+
+        <div class="lightbox-edit-toolbar" id="lightboxCropToolbar" style="display:none;">
+            <span class="lightbox-crop-hint">Drag on the image to select a crop area</span>
+            <span class="lightbox-edit-spacer"></span>
+            <button class="lightbox-edit-btn" data-action="edit-crop-cancel">Cancel</button>
+            <button class="lightbox-edit-btn lightbox-edit-save" data-action="edit-crop-apply">Apply</button>
+        </div>
+    </div>
+
+    <!-- Compare Slider Overlay -->
+    <div class="compare-slider-overlay" id="compareSliderOverlay" role="dialog" aria-modal="true" aria-label="Image comparison slider">
+        <button class="compare-slider-close" data-action="close-compare-slider" aria-label="Close comparison slider">×</button>
+        <div class="compare-slider-labels" id="compareSliderLabels">
+            <span id="compareSliderLabelA"></span>
+            <span id="compareSliderLabelB"></span>
+        </div>
+        <div class="compare-slider-container" id="compareSliderContainer">
+            <img class="compare-slider-img compare-slider-img-b" id="compareImgB" src="" alt="">
+            <div class="compare-slider-img-a-wrapper" id="compareImgAWrapper">
+                <img class="compare-slider-img compare-slider-img-a" id="compareImgA" src="" alt="">
+            </div>
+            <div class="compare-slider-handle" id="compareSliderHandle" role="slider" aria-label="Comparison position" aria-valuenow="50" aria-valuemin="0" aria-valuemax="100" tabindex="0">
+                <div class="compare-slider-line"></div>
+                <div class="compare-slider-grip">&#8596;</div>
+            </div>
+        </div>
+        <p class="compare-slider-hint">Drag the handle to compare · <kbd>←</kbd><kbd>→</kbd> to nudge · <kbd>Esc</kbd> to close</p>
     </div>
     
     <script src="/static/js/app.js"></script>
+    <script src="/static/js/editor.js"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+        }
+    </script>
 </body>
 </html>

@@ -3,3 +3,5 @@
 **/*.pyc
 *.egg-info/
 .claude/
+node_modules/
+npm-debug.log*

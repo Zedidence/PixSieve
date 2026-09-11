@@ -184,3 +184,57 @@ class TestDuplicateGroup:
         assert group.id == 1
         assert group.match_type == "perceptual"
         assert len(group.images) == 2
+
+
+class TestDuplicateGroupReferenceSelectionDivergence:
+    """
+    best_image/duplicates/to_dict() are a separate, quality-only selection
+    path from utils.selection.resolve_group_selections() (the reference-aware
+    path actually used to decide real keep/delete actions). This class pins
+    that divergence explicitly, so any future refactor that tries to "clean
+    up" one path without the other shows up as a test failure instead of a
+    silent landmine - see the duplicate-finding improvement plan (Phase 1,
+    item #13) and utils/selection.py::stamp_group_selections().
+    """
+
+    def test_best_image_ignores_reference_status(self):
+        """A lower-quality reference image loses to a higher-quality
+        non-reference image under best_image/duplicates - this is the
+        divergence itself, not a desired behavior. resolve_group_selections()
+        (utils/selection.py) is what actually protects reference images from
+        deletion; best_image alone does not."""
+        ref_img = ImageInfo(path="/ref/a.jpg", quality_score=1.0, is_reference=True)
+        other_img = ImageInfo(path="/other/b.jpg", quality_score=99.0, is_reference=False)
+
+        group = DuplicateGroup(id=1, images=[ref_img, other_img])
+
+        assert group.best_image == other_img  # wrong for a reference-anchored group
+        assert group.duplicates == [ref_img]   # would flag the reference image as the dupe
+
+    def test_to_dict_falls_back_to_quality_when_selected_keep_unset(self):
+        """Without stamp_group_selections() having run, to_dict()'s
+        'selected_keep' silently disagrees with what
+        resolve_group_selections() would decide for a reference-anchored
+        group - this is the general landmine described in the plan."""
+        from pixsieve.utils.selection import resolve_group_selections
+
+        ref_img = ImageInfo(path="/ref/a.jpg", quality_score=1.0, is_reference=True)
+        other_img = ImageInfo(path="/other/b.jpg", quality_score=99.0, is_reference=False)
+        group = DuplicateGroup(id=1, images=[ref_img, other_img])
+
+        # The real, reference-aware answer:
+        selections = resolve_group_selections([group], "quality")
+        assert selections["/ref/a.jpg"] == "keep"
+
+        # But to_dict(), with selected_keep never stamped, disagrees:
+        assert group.to_dict()["selected_keep"] == "/other/b.jpg"
+
+    def test_to_dict_agrees_once_selected_keep_is_stamped(self):
+        """Once selected_keep is explicitly stamped (see
+        stamp_group_selections() in utils/selection.py), to_dict()'s
+        fallback never runs and the two paths agree."""
+        ref_img = ImageInfo(path="/ref/a.jpg", quality_score=1.0, is_reference=True)
+        other_img = ImageInfo(path="/other/b.jpg", quality_score=99.0, is_reference=False)
+        group = DuplicateGroup(id=1, images=[ref_img, other_img], selected_keep="/ref/a.jpg")
+
+        assert group.to_dict()["selected_keep"] == "/ref/a.jpg"

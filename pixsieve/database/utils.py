@@ -48,6 +48,16 @@ def make_cache_key(filepath: str, mtime: float, size: int) -> str:
 
     Returns:
         Cache key string
+
+    Known limitation:
+        There is no content-hash fallback. If a file's bytes change while its
+        mtime AND size both happen to stay identical (e.g. an in-place editor
+        that preserves mtime, or two different same-length files swapped in
+        with a faked timestamp), the cache will keep serving the old
+        file_hash/perceptual_hash indefinitely - this key has no way to
+        detect that case. Considered low-probability and not currently
+        mitigated; a real fix would need a cheap content-sampling check added
+        to the key, which is a larger change than fixing this docstring.
     """
     return f"{filepath}:{mtime}:{size}"
 
@@ -82,6 +92,28 @@ def row_to_imageinfo(row: sqlite3.Row) -> ImageInfo:
     except (IndexError, KeyError):
         dominant_color = None
 
+    # media_type/duration may not exist on older DB rows (before video
+    # support was added) - same non-destructive-migration fallback.
+    try:
+        media_type = row['media_type'] or 'image'
+    except (IndexError, KeyError):
+        media_type = 'image'
+    try:
+        duration = row['duration'] or 0.0
+    except (IndexError, KeyError):
+        duration = 0.0
+
+    # sharpness_score/capture_date may not exist on older DB rows (before
+    # this feature was added) - same non-destructive-migration fallback.
+    try:
+        sharpness_score = row['sharpness_score'] or 0.0
+    except (IndexError, KeyError):
+        sharpness_score = 0.0
+    try:
+        capture_date = row['capture_date']
+    except (IndexError, KeyError):
+        capture_date = None
+
     return ImageInfo(
         path=row['path'],
         file_size=row['file_size'],
@@ -95,6 +127,10 @@ def row_to_imageinfo(row: sqlite3.Row) -> ImageInfo:
         quality_score=row['quality_score'] or 0.0,
         dominant_color=dominant_color,
         error=row['error'],
+        media_type=media_type,
+        duration=duration,
+        sharpness_score=sharpness_score,
+        capture_date=capture_date,
     )
 
 

@@ -25,6 +25,35 @@ IMAGE_EXTENSIONS = {
     '.pcx', '.sgi', '.rgb', '.rgba', '.bw',
 }
 
+# Supported video extensions for the (opt-in) video duplicate-detection
+# feature. Deliberately kept separate from IMAGE_EXTENSIONS rather than
+# merged in - image-only operations (EXIF writes, color sorting, corruption
+# repair, star-rating removal) filter by IMAGE_EXTENSIONS or narrower sets
+# and must keep excluding video files without any changes to those modules.
+# Requires opencv-python-headless (HAS_VIDEO_SUPPORT); see scanner/dependencies.py.
+VIDEO_EXTENSIONS = {
+    '.mp4', '.mov', '.avi', '.mkv', '.wmv', '.flv',
+    '.webm', '.m4v', '.mpg', '.mpeg', '.3gp',
+}
+
+
+def resolve_extensions(base, include_videos=False, *, video_extensions=None, extra=None):
+    """Resolve the working extension set for an operation.
+
+    `extra` (an explicit caller-supplied override) replaces `base` entirely;
+    `include_videos` then unions in `video_extensions` (default
+    VIDEO_EXTENSIONS) on top of whichever set that leaves. This matches the
+    Duplicates tab's existing "include videos ADDS video scanning" mental
+    model rather than a silent replace, and is the single place that defines
+    what `include_videos` means for every operation - CLI, API, and pipeline
+    should all route their extension-set decision through this function.
+    """
+    result = set(extra) if extra else set(base)
+    if include_videos:
+        result |= (video_extensions or VIDEO_EXTENSIONS)
+    return result
+
+
 # Format quality ranking (higher = better quality potential)
 # Lossless/RAW formats ranked higher
 FORMAT_QUALITY_RANK = {
@@ -49,6 +78,11 @@ FORMAT_QUALITY_RANK = {
     '.gif': 50,
     # Other
     '.ico': 40, '.icns': 40,
+    # Video containers (rough heuristic - actual quality depends far more on
+    # codec/bitrate than container, but this keeps common containers from
+    # falling back to the generic default)
+    '.mov': 70, '.mkv': 65, '.mp4': 65, '.avi': 55, '.webm': 55,
+    '.wmv': 50, '.flv': 45, '.m4v': 65, '.mpg': 50, '.mpeg': 50, '.3gp': 40,
 }
 
 # Default similarity threshold for perceptual hashing
@@ -67,16 +101,34 @@ DEFAULT_WORKERS = min(max(4, _cpu_count * 2), 16)
 MAX_IMAGE_PIXELS = int(os.environ.get('PIXSIEVE_MAX_IMAGE_PIXELS', 500_000_000))
 
 # LSH (Locality-Sensitive Hashing) configuration
-# LSH provides O(n) performance vs O(n²) brute-force for perceptual matching
+# LSH provides O(n) performance vs O(n²) brute-force for perceptual matching.
+# Table/bit-count tuning is NOT controlled here - scanner/lsh.py's
+# calculate_optimal_params() hardcodes tiered (num_tables, bits_per_table)
+# values by collection size instead; there is currently no manual override.
 LSH_AUTO_THRESHOLD = 1000  # Auto-enable LSH when >= this many images
-LSH_DEFAULT_TABLES = 20    # Number of hash tables (more = better recall)
-LSH_DEFAULT_BITS = 16      # Bits per table (fewer = more candidates)
 
 # Large library thresholds and tuning
 LARGE_LIBRARY_THRESHOLD = 100_000                   # files — triggers large-library mode
 LARGE_LIBRARY_WORKERS   = min(os.cpu_count() * 4, 32)  # more aggressive parallelism
 WRITE_BATCH_SIZE        = 5_000                     # cache insert batch size before lock release
 DISCOVERY_CHUNK_SIZE    = 1_000                     # files per discovery chunk
+
+# Threshold for auto-disabling perceptual matching in the web GUI.
+# Perceptual matching is O(n^2), so 50K images = 1.25 billion comparisons.
+PERCEPTUAL_AUTO_DISABLE_THRESHOLD = 50_000
+
+# Above this collection size, scanner/deduplication.py skips the "seen pairs"
+# LSH-level dedup set (it would itself become too large) and relies on the
+# Union-Find skip instead.
+LSH_DEDUPE_SEEN_SET_MAX = 500_000
+
+# The web API's own default for a request's `workers` field (used by both
+# api/schemas.py's Pydantic models and api/orchestrator.py, which needs the
+# literal default value to detect "the caller left this at its default" for
+# large-library auto-scaling). Deliberately separate from DEFAULT_WORKERS
+# above, which auto-scales with the server's CPU count for the CLI - this is
+# a fixed default so API behavior doesn't vary by server hardware.
+DEFAULT_API_WORKERS = 4
 
 # Bit depth mapping for different image modes
 MODE_BIT_DEPTHS = {
@@ -94,6 +146,17 @@ HISTORY_FILE = os.path.join(os.path.expanduser('~'), '.duplicate_finder_history.
 # Stores analyzed image metadata for faster re-scans
 CACHE_DB_FILE = os.path.join(os.path.expanduser('~'), '.duplicate_finder_cache.db')
 
+# Log a WARNING if a single file's analysis (stat + decode + hash) takes at
+# least this many seconds — flags pathological files (huge panoramas,
+# near-decompression-bombs, flaky network/USB reads) that would otherwise
+# silently stall a worker with no visible symptom besides a slow scan.
+SLOW_FILE_WARN_SECONDS = 10.0
+
+# How often (seconds) long-running, otherwise-silent loops emit a heartbeat
+# progress log — e.g. the cache lookup stat pass over the full file list,
+# which has no natural per-item progress callback.
+HEARTBEAT_LOG_INTERVAL_SECONDS = 5.0
+
 # =============================================================================
 # MediaManager Operations Configuration
 # =============================================================================
@@ -109,6 +172,18 @@ ALPHA_SORT_GROUPS = {
 
 # EXIF-compatible extensions (supports EXIF metadata)
 EXIF_EXTENSIONS = {'.jpg', '.jpeg', '.tiff', '.tif'}
+
+# Extensions passed to exiftool for favorite/star-rating detection & removal.
+# exiftool supports far more formats than piexif (EXIF_EXTENSIONS above is
+# piexif-only), so this list is intentionally broader than EXIF_EXTENSIONS
+# but narrower than the full IMAGE_EXTENSIONS set (excludes formats like
+# .svg/.ico where a "star rating" concept isn't meaningful).
+# Ported from the original faveRemover script's IMAGE_EXTENSIONS.
+RATING_EXTENSIONS = {
+    '.jpg', '.jpeg', '.png', '.tiff', '.tif', '.heic', '.heif', '.webp', '.bmp',
+    '.cr2', '.cr3', '.nef', '.arw', '.dng', '.orf', '.rw2', '.raf', '.pef',
+    '.nrw', '.srf', '.sr2', '.rwl',
+}
 
 # Image formats convertible to JPG
 CONVERTIBLE_TO_JPG = {'.png', '.bmp', '.webp'}
@@ -136,3 +211,13 @@ WINDOWS_RESERVED_NAMES = (
     + [f'LPT{i}' for i in range(1, 10)]
 )
 WINDOWS_MAX_PATH = 250
+
+# Characters not allowed in Windows filenames, plus all ASCII control
+# characters (0-31, e.g. a literal NUL/tab/newline byte) which Windows also
+# rejects. Single source of truth for pixsieve/utils/operations.py's
+# sanitize_filename() and pixsieve/api/schemas.py's RenameImageRequest
+# validator - these used to be two independently-maintained character sets
+# that had drifted (the CLI's version omitted control characters, so a
+# "sanitized" filename could still contain one, while the API's rejected
+# them outright).
+WINDOWS_INVALID_FILENAME_CHARS = frozenset('<>:"/\\|?*') | frozenset(chr(c) for c in range(32))

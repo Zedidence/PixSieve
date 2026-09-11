@@ -12,6 +12,45 @@ import argparse
 from pathlib import Path
 
 from ..config import DEFAULT_THRESHOLD, DEFAULT_WORKERS
+from ..operations.capabilities import OPERATION_VIDEO_SUPPORT, needs_video_flag
+
+
+def _bounded_int(min_val: int, max_val: int):
+    """
+    Build an argparse `type=` callable that rejects an out-of-range integer
+    with a clean usage error instead of silently clamping it (the previous
+    behavior on the equivalent web-API fields, and unbounded here on the
+    CLI -- both are now enforced consistently via the same bounds the API's
+    pydantic schemas declare in api/schemas.py).
+    """
+    def _parse(value: str) -> int:
+        ivalue = int(value)
+        if not (min_val <= ivalue <= max_val):
+            raise argparse.ArgumentTypeError(
+                f"must be between {min_val} and {max_val} (got {ivalue})"
+            )
+        return ivalue
+    return _parse
+
+
+def _add_include_videos_arg(parser: argparse.ArgumentParser, op_name: str) -> None:
+    """
+    Add --include-videos to `parser`, but only for operations whose
+    capability registry entry (pixsieve/operations/capabilities.py) actually
+    has a video toggle to expose. A no-op for every other op, so passing
+    --include-videos to an unsupported operation is a normal argparse
+    "unrecognized arguments" error rather than a silently ignored flag.
+    """
+    if not needs_video_flag(op_name):
+        return
+    note = OPERATION_VIDEO_SUPPORT[op_name].get('note')
+    help_text = (
+        'Also process video files (mp4, mov, avi, mkv, etc). '
+        'Requires opencv-python-headless (pip install pixsieve[video]).'
+    )
+    if note:
+        help_text += f' Note: {note}'
+    parser.add_argument('--include-videos', action='store_true', help=help_text)
 
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
@@ -22,15 +61,9 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         help='Target directory'
     )
     parser.add_argument(
-        '--dry-run',
-        action='store_true',
-        default=True,
-        help='Simulate without making changes (default: True)'
-    )
-    parser.add_argument(
         '--no-dry-run',
         action='store_true',
-        help='Actually perform the operation'
+        help='Actually perform the operation (default is dry-run/simulate only)'
     )
     parser.add_argument(
         '-v', '--verbose',
@@ -77,20 +110,48 @@ Platform Notes:
     dup.add_argument(
         'directory',
         type=Path,
-        nargs='?',
+        nargs='*',
+        default=[],
+        help='Directory/directories to scan for duplicate images (space-separated for multiple)'
+    )
+    dup.add_argument(
+        '--reference-dir',
+        type=Path,
         default=None,
-        help='Directory to scan for duplicate images'
+        help=(
+            'Mark one of the scanned directories as the reference/canonical folder. '
+            'Images in it are never deleted/moved/modified; any duplicate group '
+            'containing a reference image auto-keeps all reference copies and flags '
+            'all other copies for removal. Must exactly match one of the given '
+            'directory arguments.'
+        )
+    )
+    dup.add_argument(
+        '--auto-select-strategy',
+        choices=['quality', 'largest', 'smallest', 'newest', 'oldest'],
+        default='quality',
+        help='Strategy for choosing which file to keep in groups with no reference image. Default: quality'
     )
 
     # Scanning options
+    _add_recursive_arg(dup)
     dup.add_argument(
-        '-r', '--no-recursive',
+        '--no-resolve-symlinks',
         action='store_true',
-        help='Do not scan subdirectories'
+        help=(
+            'Skip symlink path canonicalization during discovery. Saves one '
+            'extra filesystem round-trip per file (5-15%% faster on drives '
+            'with no symlinks, especially over slower interfaces like USB). '
+            'Files reachable via multiple symlinks (or hardlinks) to the '
+            'same underlying file are still deduplicated by file identity '
+            'regardless of this flag; disabling it only means the reported '
+            'path for a symlinked file stays as the symlink path instead of '
+            'its resolved target.'
+        )
     )
     dup.add_argument(
         '-t', '--threshold',
-        type=int,
+        type=_bounded_int(0, 64),
         default=DEFAULT_THRESHOLD,
         help=f'Perceptual hash threshold (0-64, lower=stricter). Default: {DEFAULT_THRESHOLD}'
     )
@@ -103,6 +164,15 @@ Platform Notes:
         '--perceptual-only',
         action='store_true',
         help='Only find perceptual duplicates (skip exact matching)'
+    )
+    dup.add_argument(
+        '--include-videos',
+        action='store_true',
+        help=(
+            'Also scan and deduplicate video files (mp4, mov, avi, mkv, etc). '
+            'Requires opencv-python-headless (pip install pixsieve[video]). '
+            'Off by default - video decoding is slower than image analysis.'
+        )
     )
 
     # LSH control
@@ -148,9 +218,9 @@ Platform Notes:
     # Performance
     dup.add_argument(
         '-w', '--workers',
-        type=int,
+        type=_bounded_int(1, 32),
         default=DEFAULT_WORKERS,
-        help=f'Number of parallel workers. Default: {DEFAULT_WORKERS}'
+        help=f'Number of parallel workers (1-32). Default: {DEFAULT_WORKERS}'
     )
 
     # Export
@@ -177,6 +247,12 @@ Platform Notes:
         action='store_true',
         help='Disable progress bars (useful for piping output)'
     )
+    dup.add_argument(
+        '--log-file',
+        type=str,
+        default=None,
+        help='Also write logs to this file (recommended for long, unattended scans)'
+    )
 
 
 def _build_move_to_parent_parser(subparsers) -> None:
@@ -191,6 +267,7 @@ def _build_move_to_parent_parser(subparsers) -> None:
         nargs='+',
         help='Only move files with these extensions (e.g., .jpg .png)'
     )
+    _add_include_videos_arg(p, 'move-to-parent')
 
 
 def _build_move_parser(subparsers) -> None:
@@ -227,21 +304,22 @@ def _build_rename_parser(subparsers) -> None:
     _add_recursive_arg(rr)
     rr.add_argument(
         '--length',
-        type=int,
+        type=_bounded_int(4, 64),
         default=12,
-        help='Length of random name. Default: 12'
+        help='Length of random name (4-64). Default: 12'
     )
     rr.add_argument(
         '-w', '--workers',
-        type=int,
+        type=_bounded_int(1, 16),
         default=4,
-        help='Number of parallel workers. Default: 4'
+        help='Number of parallel workers (1-16). Default: 4'
     )
     rr.add_argument(
         '--extensions',
         nargs='+',
         help='Only rename files with these extensions (e.g., .jpg .png)'
     )
+    _add_include_videos_arg(rr, 'rename-random')
 
     # rename parent
     rp = rename_sub.add_parser('parent', help='Rename based on parent folder name')
@@ -281,6 +359,7 @@ def _build_sort_parser(subparsers) -> None:
         default=3,
         help='Number of palette colors (for palette method). Default: 3'
     )
+    _add_include_videos_arg(sc, 'sort-color')
 
 
 def _build_fix_extensions_parser(subparsers) -> None:
@@ -303,7 +382,7 @@ def _build_convert_parser(subparsers) -> None:
     _add_recursive_arg(p)
     p.add_argument(
         '--quality',
-        type=int,
+        type=_bounded_int(1, 100),
         default=95,
         help='JPG quality (1-100). Default: 95'
     )
@@ -323,23 +402,11 @@ def _build_metadata_parser(subparsers) -> None:
     meta_sub = p.add_subparsers(dest='metadata_mode', help='Metadata operation')
     meta_sub.required = True
 
-    # metadata randomize-exif
-    me = meta_sub.add_parser('randomize-exif', help='Randomize EXIF date metadata')
-    _add_common_args(me)
-    _add_recursive_arg(me)
-    me.add_argument(
-        '--start',
-        required=True,
-        help='Start date (YYYY-MM-DD)'
-    )
-    me.add_argument(
-        '--end',
-        required=True,
-        help='End date (YYYY-MM-DD)'
-    )
-
     # metadata randomize-dates
-    md = meta_sub.add_parser('randomize-dates', help='Randomize file system timestamps')
+    md = meta_sub.add_parser(
+        'randomize-dates',
+        help='Randomize image dates: EXIF date taken (JPG/TIFF) + filesystem timestamps'
+    )
     _add_common_args(md)
     _add_recursive_arg(md)
     md.add_argument(
@@ -352,6 +419,12 @@ def _build_metadata_parser(subparsers) -> None:
         required=True,
         help='End date (YYYY-MM-DD)'
     )
+    md.add_argument(
+        '--no-exif',
+        action='store_true',
+        help='Skip EXIF date update; only update filesystem timestamps'
+    )
+    _add_include_videos_arg(md, 'randomize-dates')
 
 
 def _build_cleanup_parser(subparsers) -> None:
@@ -363,12 +436,26 @@ def _build_cleanup_parser(subparsers) -> None:
     _add_common_args(p)
 
 
+def _build_strip_ratings_parser(subparsers) -> None:
+    """Build the 'strip-ratings' subcommand."""
+    p = subparsers.add_parser(
+        'strip-ratings',
+        help='Remove 5-star/favorite rating tags from images via exiftool'
+    )
+    _add_common_args(p)
+    _add_recursive_arg(p)
+    _add_include_videos_arg(p, 'strip-ratings')
+
+
 def _build_pipeline_parser(subparsers) -> None:
     """Build the 'pipeline' subcommand."""
     p = subparsers.add_parser(
         'pipeline',
         help='Run a multi-step workflow',
-        epilog='Available steps: random_rename, convert_jpg, randomize_exif, randomize_dates, cleanup_empty'
+        epilog=(
+            'Available steps: random_rename, convert_jpg, randomize_dates, '
+            'cleanup_empty, repair_corrupt'
+        )
     )
     _add_common_args(p)
     _add_recursive_arg(p)
@@ -387,21 +474,22 @@ def _build_pipeline_parser(subparsers) -> None:
     )
     p.add_argument(
         '--length',
-        type=int,
+        type=_bounded_int(4, 64),
         default=12,
-        help='Random name length (for random_rename step). Default: 12'
+        help='Random name length (4-64, for random_rename step). Default: 12'
     )
     p.add_argument(
         '--quality',
-        type=int,
+        type=_bounded_int(1, 100),
         default=95,
-        help='JPG quality (for convert_jpg step). Default: 95'
+        help='JPG quality (1-100, for convert_jpg step). Default: 95'
     )
     p.add_argument(
         '--delete-originals',
         action='store_true',
         help='Delete originals after conversion (for convert_jpg step)'
     )
+    _add_include_videos_arg(p, 'pipeline')
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -426,6 +514,7 @@ Commands:
   convert          Convert images to JPG
   metadata         Manipulate EXIF data and timestamps
   cleanup          Delete empty folders
+  strip-ratings    Remove 5-star/favorite rating tags (requires exiftool)
   pipeline         Run multi-step workflow
 
 Examples:
@@ -460,6 +549,7 @@ Examples:
     _build_convert_parser(subparsers)
     _build_metadata_parser(subparsers)
     _build_cleanup_parser(subparsers)
+    _build_strip_ratings_parser(subparsers)
     _build_pipeline_parser(subparsers)
 
     return parser
@@ -467,7 +557,7 @@ Examples:
 
 _VALID_COMMANDS = {
     'duplicates', 'move-to-parent', 'move', 'rename', 'sort',
-    'fix-extensions', 'convert', 'metadata', 'cleanup', 'pipeline',
+    'fix-extensions', 'convert', 'metadata', 'cleanup', 'strip-ratings', 'pipeline',
 }
 
 
@@ -501,11 +591,14 @@ def parse_arguments(argv=None) -> argparse.Namespace:
         # (will trigger interactive prompt)
         args = argparse.Namespace(
             command='duplicates',
-            directory=None,
+            directory=[],
+            reference_dir=None,
+            auto_select_strategy='quality',
             no_recursive=False,
             threshold=DEFAULT_THRESHOLD,
             exact_only=False,
             perceptual_only=False,
+            include_videos=False,
             force_lsh=False,
             no_lsh=False,
             no_cache=False,

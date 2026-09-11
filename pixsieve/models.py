@@ -32,10 +32,20 @@ class ImageInfo:
         bit_depth: Color bit depth
         format: Image format (PNG, JPEG, etc.)
         file_hash: SHA256 hash of file contents
-        perceptual_hash: Perceptual hash for similarity matching
+        perceptual_hash: Perceptual hash for similarity matching. For videos,
+            a "|"-joined sequence of per-sampled-frame pHash hex strings
+            rather than a single hash - see scanner/video_analysis.py.
         quality_score: Computed quality score for ranking
         dominant_color: Cached dominant RGB color as "R,G,B" string (G1 optimization)
         error: Error message if analysis failed
+        media_type: "image" or "video"
+        duration: Video duration in seconds (0.0 for images)
+        sharpness_score: Cheap edge-variance sharpness proxy (0.0 if not
+            computed, e.g. calculate_phash=False or non-image media). A weak
+            tiebreaker only - see hashing.py::calculate_quality_score().
+        capture_date: EXIF DateTimeOriginal as a Unix timestamp, or None if
+            absent/unparseable/not an image. Used by utils/selection.py's
+            NEWEST/OLDEST strategies in preference to filesystem mtime.
     """
     path: str
     file_size: int = 0
@@ -49,7 +59,15 @@ class ImageInfo:
     quality_score: float = 0.0
     dominant_color: Optional[str] = None  # "R,G,B" or None
     error: Optional[str] = None
-    
+    media_type: str = "image"  # "image" or "video"
+    duration: float = 0.0  # seconds; 0.0 for images
+    sharpness_score: float = 0.0
+    capture_date: Optional[float] = None  # Unix timestamp, or None
+    # Runtime-only: which scan root this image was discovered under was the
+    # reference folder. Never persisted to the analysis cache (cache rows are
+    # reused across unrelated scans, so this must be re-stamped per scan).
+    is_reference: bool = False
+
     def __hash__(self):
         return hash(str(self.path))
     
@@ -82,7 +100,16 @@ class ImageInfo:
     def file_size_formatted(self) -> str:
         """Return human-readable file size."""
         return format_size(self.file_size)
-    
+
+    @property
+    def duration_formatted(self) -> str:
+        """Return video duration as 'M:SS' (empty string for non-video/zero duration)."""
+        if self.duration <= 0:
+            return ""
+        total_seconds = int(round(self.duration))
+        minutes, seconds = divmod(total_seconds, 60)
+        return f"{minutes}:{seconds:02d}"
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -99,8 +126,14 @@ class ImageInfo:
             'format': self.format,
             'quality_score': round(self.quality_score, 1),
             'error': self.error,
+            'is_reference': self.is_reference,
+            'media_type': self.media_type,
+            'duration': self.duration,
+            'duration_formatted': self.duration_formatted,
+            'sharpness_score': round(self.sharpness_score, 1),
+            'capture_date': self.capture_date,
         }
-    
+
     @classmethod
     def from_dict(cls, data: dict) -> 'ImageInfo':
         """Create ImageInfo from dictionary."""
@@ -116,6 +149,11 @@ class ImageInfo:
             perceptual_hash=data.get('perceptual_hash', ''),
             quality_score=data.get('quality_score', 0.0),
             error=data.get('error'),
+            is_reference=data.get('is_reference', False),
+            media_type=data.get('media_type', 'image'),
+            duration=data.get('duration', 0.0),
+            sharpness_score=data.get('sharpness_score', 0.0),
+            capture_date=data.get('capture_date'),
         )
 
 
@@ -127,12 +165,13 @@ class DuplicateGroup:
     Attributes:
         id: Unique identifier for this group
         images: List of ImageInfo objects in this group
-        match_type: How duplicates were detected ('exact' or 'perceptual')
+        match_type: How duplicates were detected ('exact', 'perceptual', or
+            'video-perceptual')
         selected_keep: Path of image selected to keep (if user has chosen)
     """
     id: int
     images: list = field(default_factory=list)
-    match_type: str = "unknown"  # "exact" or "perceptual"
+    match_type: str = "unknown"  # "exact", "perceptual", or "video-perceptual"
     selected_keep: Optional[str] = None
     
     @property

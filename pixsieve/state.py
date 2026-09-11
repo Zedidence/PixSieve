@@ -40,7 +40,8 @@ class ScanState:
         self.progress = 0
         self.stage_progress = 0  # Progress within current stage (0-100)
         self.message = ''
-        self.directory = ''
+        self.directory = ''  # back-compat: primary (first) scanned directory
+        self.directories: list[dict] = []  # [{'path': str, 'is_reference': bool}, ...]
         self.total_files = 0
         self.analyzed = 0
         self.groups: list[DuplicateGroup] = []
@@ -113,6 +114,7 @@ class ScanState:
                 'stage_progress': self.stage_progress,
                 'message': self.message,
                 'directory': self.directory,
+                'directories': self.directories,
                 'total_files': self.total_files,
                 'selections': self.selections,
                 'last_updated': datetime.now().isoformat(),
@@ -154,12 +156,26 @@ class ScanState:
             self.stage_progress = saved.get('stage_progress', 0)
             self.message = saved.get('message', '')
             self.directory = saved.get('directory', '')
+            self.directories = saved.get('directories') or (
+                [{'path': self.directory, 'is_reference': False}] if self.directory else []
+            )
             self.total_files = saved.get('total_files', 0)
             self.selections = saved.get('selections', {})
             self.last_updated = saved.get('last_updated')
             self.settings = {**self.settings, **saved.get('settings', {})}
             self.progress_details = {**self.progress_details, **saved.get('progress_details', {})}
-            
+
+            # A scan only runs on an in-memory background thread, which never
+            # survives a process restart (or a killed/crashed process). An
+            # in-progress status loaded from disk is therefore always stale —
+            # treat it as an interrupted scan rather than one still running,
+            # otherwise the app reports "analyzing" forever with no thread
+            # left to finish it or respond to cancel/pause.
+            if self.status in ('scanning', 'analyzing', 'comparing'):
+                self.status = 'error'
+                self.stage = 'idle'
+                self.message = 'Previous scan was interrupted (app restarted or closed). Start a new scan.'
+
             # Rebuild group objects from saved data
             self.groups = []
             for g_data in saved.get('groups', []):
@@ -197,6 +213,7 @@ class ScanState:
             'total_files': self.total_files,
             'analyzed': self.analyzed,
             'directory': self.directory,
+            'directories': self.directories,
             'has_results': len(self.groups) > 0,
             'group_count': len(self.groups),
             'error_count': len(self.error_images),
@@ -212,6 +229,7 @@ class ScanState:
             'groups': [g.to_dict() for g in self.groups],
             'selections': self.selections,
             'directory': self.directory,
+            'directories': self.directories,
             'error_images': [img.to_dict() for img in self.error_images],
             'settings': self.settings,
         }

@@ -8,13 +8,12 @@ progress tracking, and date parsing used across operation modules.
 from __future__ import annotations
 
 import os
-import re
 import logging
 from pathlib import Path
 from datetime import datetime
 from typing import Iterator, Any
 
-from ..config import WINDOWS_RESERVED_NAMES, WINDOWS_MAX_PATH
+from ..config import WINDOWS_RESERVED_NAMES, WINDOWS_MAX_PATH, WINDOWS_INVALID_FILENAME_CHARS
 
 logger = logging.getLogger(__name__)
 
@@ -67,16 +66,18 @@ def sanitize_filename(name: str) -> str:
         Sanitized filename safe for Windows/Unix
 
     Notes:
-        - Removes: < > : " / \\ | ? *
+        - Removes: < > : " / \\ | ? * and ASCII control characters (0-31),
+          per config.WINDOWS_INVALID_FILENAME_CHARS (shared with the API's
+          own filename validator, so both reject the same characters)
         - Checks for Windows reserved names (CON, PRN, etc.)
         - Preserves file extension
     """
     # Remove invalid characters
-    invalid_chars = r'[<>:"/\\|?*]'
-    sanitized = re.sub(invalid_chars, '_', name)
+    sanitized = ''.join(
+        '_' if ch in WINDOWS_INVALID_FILENAME_CHARS else ch for ch in name
+    )
 
     # Handle Windows reserved names
-    name_upper = sanitized.upper()
     stem = Path(sanitized).stem.upper()
 
     if stem in WINDOWS_RESERVED_NAMES:

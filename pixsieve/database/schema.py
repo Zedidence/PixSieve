@@ -6,11 +6,48 @@ Provides schema versioning and table creation for the cache database.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 
+logger = logging.getLogger(__name__)
 
-# Schema version - increment when changing table structure
-SCHEMA_VERSION = 1
+_DUPLICATE_COLUMN_MARKER = "duplicate column name"
+
+
+# Schema version - increment when changing table structure OR when a change
+# alters the VALUE an existing column should hold for already-cached rows
+# (structural changes need this to run migrations; value changes need it to
+# force re-analysis, since there is no way to selectively recompute just the
+# affected rows without re-decoding every cached file anyway).
+#
+# v2: scanner/hashing.py's _ensure_phash_mode() now applies EXIF-orientation
+# normalization before hashing (ImageOps.exif_transpose()), which changes the
+# perceptual_hash VALUE for any already-cached image whose EXIF Orientation
+# tag was not 1. Serving those stale hashes from the cache would silently
+# defeat the fix for every returning user with a warm cache - the whole
+# reason this fix exists is to catch EXIF-rotated duplicate photos, and a
+# warm cache is the common case for a returning user. A full re-analysis on
+# next scan is a one-time, deliberate cost.
+SCHEMA_VERSION = 2
+
+
+def _add_column_if_missing(conn: sqlite3.Connection, alter_sql: str) -> None:
+    """
+    Run an ALTER TABLE ... ADD COLUMN statement, tolerating only the
+    "column already exists" case.
+
+    A bare `except Exception: pass` here would silently swallow genuine
+    failures (disk full, permission denied, a locked or corrupted database)
+    identically to the expected no-op case, leaving the schema in an
+    unexpected state with no trace in the logs. Narrowing to
+    OperationalError and checking the message keeps the no-op behavior for
+    the one case it's meant for while surfacing everything else.
+    """
+    try:
+        conn.execute(alter_sql)
+    except sqlite3.OperationalError as exc:
+        if _DUPLICATE_COLUMN_MARKER not in str(exc).lower():
+            logger.warning(f"Schema migration '{alter_sql}' failed unexpectedly: {exc}")
 
 
 def initialize_schema(conn: sqlite3.Connection) -> None:
@@ -113,10 +150,22 @@ def initialize_schema(conn: sqlite3.Connection) -> None:
 
     # G1: add dominant_color column non-destructively (ALTER TABLE is safe on
     # existing databases; silently ignored if the column already exists).
-    try:
-        conn.execute("ALTER TABLE images ADD COLUMN dominant_color TEXT")
-    except Exception:
-        pass  # Column already exists in this database
+    _add_column_if_missing(conn, "ALTER TABLE images ADD COLUMN dominant_color TEXT")
+
+    # Video support: add media_type/duration columns non-destructively, same
+    # as dominant_color above. Deliberately NOT a SCHEMA_VERSION bump - that
+    # would DROP and rebuild the whole images table above, forcing a full
+    # re-analysis of every cached file (including images) on next scan.
+    _add_column_if_missing(conn, "ALTER TABLE images ADD COLUMN media_type TEXT DEFAULT 'image'")
+    _add_column_if_missing(conn, "ALTER TABLE images ADD COLUMN duration REAL DEFAULT 0")
+
+    # Content-aware quality scoring / EXIF-capture-date sorting: add
+    # sharpness_score/capture_date non-destructively, same as above - purely
+    # additive fields (absent = "not computed yet", not "wrong"), so unlike
+    # the SCHEMA_VERSION bump above (which corrects an existing value), no
+    # forced re-analysis is needed for these to take effect.
+    _add_column_if_missing(conn, "ALTER TABLE images ADD COLUMN sharpness_score REAL DEFAULT 0")
+    _add_column_if_missing(conn, "ALTER TABLE images ADD COLUMN capture_date REAL DEFAULT NULL")
 
     # Update schema version
     conn.execute("""

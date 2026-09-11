@@ -69,6 +69,43 @@ class TestHandleCleanup:
         assert orch.run() == 1
 
 
+class TestHandleRatings:
+    """Test strip-ratings command handler."""
+
+    def test_ratings_missing_directory(self, temp_dir, logger):
+        """Strip-ratings with non-existent directory returns 1."""
+        args = make_args('strip-ratings', temp_dir / 'nonexistent')
+        orch = OperationsOrchestrator(args, logger)
+        assert orch.run() == 1
+
+    def test_ratings_missing_exiftool_returns_1_without_calling_operation(self, temp_dir, logger):
+        """Missing exiftool fails fast and never calls strip_favorite_ratings."""
+        args = make_args('strip-ratings', temp_dir)
+        orch = OperationsOrchestrator(args, logger)
+        with patch(
+            'pixsieve.cli.operations_orchestrator.check_exiftool_available',
+            return_value=(False, 'exiftool not found'),
+        ), patch(
+            'pixsieve.cli.operations_orchestrator.strip_favorite_ratings'
+        ) as mock_strip:
+            assert orch.run() == 1
+        mock_strip.assert_not_called()
+
+    def test_ratings_success(self, temp_dir, logger):
+        """Strip-ratings returns 0 on success when exiftool is available."""
+        args = make_args('strip-ratings', temp_dir)
+        orch = OperationsOrchestrator(args, logger)
+        with patch(
+            'pixsieve.cli.operations_orchestrator.check_exiftool_available',
+            return_value=(True, ''),
+        ), patch(
+            'pixsieve.cli.operations_orchestrator.strip_favorite_ratings',
+            return_value={'scanned': 0, 'favorited': 0, 'success': 0, 'failed': 0, 'files': []},
+        ) as mock_strip:
+            assert orch.run() == 0
+        mock_strip.assert_called_once()
+
+
 class TestHandleMoveToParent:
     """Test move-to-parent command handler."""
 
@@ -177,15 +214,24 @@ class TestHandleMetadata:
         assert orch.run() == 0
 
     def test_invalid_start_date(self, ops_temp_dir, logger):
-        """Invalid start date raises ValueError (parse_date doesn't return None)."""
+        """Invalid start date returns 1 with a friendly error, not a raw traceback."""
         args = make_args(
             'metadata', ops_temp_dir,
             metadata_mode='randomize-dates',
             start='bad-date', end='2023-12-31',
         )
         orch = OperationsOrchestrator(args, logger)
-        with pytest.raises(ValueError):
-            orch.run()
+        assert orch.run() == 1
+
+    def test_invalid_end_date(self, ops_temp_dir, logger):
+        """Invalid end date returns 1 with a friendly error, not a raw traceback."""
+        args = make_args(
+            'metadata', ops_temp_dir,
+            metadata_mode='randomize-dates',
+            start='2020-01-01', end='not-a-date',
+        )
+        orch = OperationsOrchestrator(args, logger)
+        assert orch.run() == 1
 
     def test_unknown_metadata_mode(self, ops_temp_dir, logger):
         """Unknown metadata mode returns 1."""
@@ -216,6 +262,16 @@ class TestHandlePipeline:
             'pipeline', ops_temp_dir,
             steps='randomize_dates',
             start=None, end=None,
+        )
+        orch = OperationsOrchestrator(args, logger)
+        assert orch.run() == 1
+
+    def test_pipeline_date_steps_invalid_dates(self, ops_temp_dir, logger):
+        """Pipeline with date steps and an unparseable date returns 1, not a traceback."""
+        args = make_args(
+            'pipeline', ops_temp_dir,
+            steps='randomize_dates',
+            start='bad-date', end='2023-12-31',
         )
         orch = OperationsOrchestrator(args, logger)
         assert orch.run() == 1

@@ -8,12 +8,21 @@ from __future__ import annotations
 
 import os
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
-from ..config import WRITE_BATCH_SIZE
+from ..config import WRITE_BATCH_SIZE, HEARTBEAT_LOG_INTERVAL_SECONDS
 from ..models import ImageInfo
 from .connection import ConnectionManager
 from .utils import make_cache_key, get_file_stats, row_to_imageinfo, CHUNK_SIZE
+
+# Stat calls are I/O-bound (blocking syscalls that release the GIL), so
+# get_batch() fans them out across threads instead of doing them one at a
+# time. This matters most on high-latency filesystems (USB/network drives)
+# where a single-threaded stat loop over hundreds of thousands of files can
+# take hours despite near-zero CPU usage.
+_STAT_WORKERS = 32
 
 
 logger = logging.getLogger(__name__)
@@ -24,8 +33,9 @@ _INSERT_SQL = """
         path, file_size, mtime, cache_key,
         width, height, pixel_count, bit_depth, format,
         file_hash, perceptual_hash, quality_score,
-        dominant_color, error
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        dominant_color, error, media_type, duration,
+        sharpness_score, capture_date
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -61,10 +71,10 @@ class CacheOperations:
             ImageInfo if cached and valid, None otherwise
         """
         try:
-            if not os.path.exists(filepath):
+            try:
+                mtime, size = get_file_stats(filepath)
+            except OSError:
                 return None
-
-            mtime, size = get_file_stats(filepath)
             cache_key = make_cache_key(filepath, mtime, size)
 
             # Read operations don't need exclusive lock
@@ -112,15 +122,48 @@ class CacheOperations:
         results: dict[str, Optional[ImageInfo]] = {fp: None for fp in filepaths}
 
         try:
-            # Build cache keys for files that exist
-            cache_keys = {}
-            for fp in filepaths:
+            # Build cache keys for files that exist. Stat calls are I/O-bound
+            # (blocking syscalls that release the GIL), so fan them out across
+            # threads — on high-latency filesystems (USB/network drives) a
+            # sequential stat loop over hundreds of thousands of files can
+            # take hours despite near-zero CPU usage.
+            def _stat_one(fp: str) -> Optional[tuple[str, str]]:
                 try:
-                    if os.path.exists(fp):
-                        mtime, size = get_file_stats(fp)
-                        cache_keys[make_cache_key(fp, mtime, size)] = fp
-                except Exception:
-                    continue
+                    mtime, size = get_file_stats(fp)
+                except OSError:
+                    return None
+                return make_cache_key(fp, mtime, size), fp
+
+            # Heartbeat log for large batches — this stat pass has no other
+            # progress signal, so on a slow/high-latency filesystem it would
+            # otherwise look identical to a hang for many minutes.
+            total = len(filepaths)
+            heartbeat = total > 5000
+            stat_start = time.monotonic()
+            last_log = stat_start
+
+            cache_keys = {}
+            with ThreadPoolExecutor(max_workers=_STAT_WORKERS) as executor:
+                for i, stat_result in enumerate(executor.map(_stat_one, filepaths), start=1):
+                    if stat_result is not None:
+                        cache_keys[stat_result[0]] = stat_result[1]
+
+                    if heartbeat:
+                        now = time.monotonic()
+                        if now - last_log >= HEARTBEAT_LOG_INTERVAL_SECONDS:
+                            elapsed = now - stat_start
+                            rate = i / elapsed if elapsed > 0 else 0
+                            logger.info(
+                                f"Cache lookup: stat'd {i:,}/{total:,} files "
+                                f"({rate:,.0f}/sec, {elapsed:.0f}s elapsed)"
+                            )
+                            last_log = now
+
+            if heartbeat:
+                logger.info(
+                    f"Cache lookup: stat'd {total:,}/{total:,} files "
+                    f"in {time.monotonic() - stat_start:.1f}s"
+                )
 
             if not cache_keys:
                 return results
@@ -193,7 +236,9 @@ class CacheOperations:
                     info.width, info.height, info.pixel_count,
                     info.bit_depth, info.format,
                     info.file_hash, info.perceptual_hash,
-                    info.quality_score, info.dominant_color, info.error
+                    info.quality_score, info.dominant_color, info.error,
+                    info.media_type, info.duration,
+                    info.sharpness_score, info.capture_date,
                 ))
 
             return True
@@ -226,6 +271,8 @@ class CacheOperations:
                 info.bit_depth, info.format,
                 info.file_hash, info.perceptual_hash,
                 info.quality_score, info.dominant_color, info.error,
+                info.media_type, info.duration,
+                info.sharpness_score, info.capture_date,
             )
 
             def _write(conn, _row=row):
@@ -341,10 +388,21 @@ class CacheOperations:
             directory: Directory path
         """
         try:
+            # Append a path separator before the wildcard so invalidating
+            # "/mnt/photos" can't also match a sibling like
+            # "/mnt/photosBackup", and escape literal '%'/'_' in the
+            # directory itself (both valid in real folder names) so they
+            # aren't misinterpreted as SQL LIKE wildcards. The separator
+            # must be appended to the raw string *before* escaping so a
+            # literal backslash in a Windows path is itself escaped too --
+            # otherwise it would combine with the wildcard '%' appended
+            # after into an unintended "\%" (escaped-literal-percent) token.
+            normalized = directory if directory.endswith(('/', '\\')) else directory + os.sep
+            escaped = normalized.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
             with self.conn_mgr.connection(exclusive=True) as conn:
                 conn.execute(
-                    "DELETE FROM images WHERE path LIKE ?",
-                    (f"{directory}%",)
+                    "DELETE FROM images WHERE path LIKE ? ESCAPE '\\'",
+                    (f"{escaped}%",)
                 )
         except Exception as e:
             logger.debug(f"Failed to invalidate cache for directory {directory}: {e}")
@@ -374,6 +432,8 @@ class CacheOperations:
                     info.bit_depth, info.format,
                     info.file_hash, info.perceptual_hash,
                     info.quality_score, info.dominant_color, info.error,
+                    info.media_type, info.duration,
+                    info.sharpness_score, info.capture_date,
                 ))
             except Exception:
                 continue

@@ -19,7 +19,7 @@ from typing import Callable
 from PIL import Image
 import numpy as np
 
-from ..config import IMAGE_EXTENSIONS, ALPHA_SORT_GROUPS
+from ..config import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, ALPHA_SORT_GROUPS, resolve_extensions
 from ..utils import get_unique_path, make_progress_bar
 from ..database import get_cache
 
@@ -120,7 +120,7 @@ class ColorImageSorter:
     - Color palette signatures (multiple colors)
     """
 
-    def __init__(self, source_dir: str | Path = ".", use_cache: bool = True):
+    def __init__(self, source_dir: str | Path = ".", use_cache: bool = True, include_videos: bool = False):
         """
         Initialize sorter.
 
@@ -129,11 +129,17 @@ class ColorImageSorter:
             use_cache: G1 - if True, look up / store dominant colors in the
                 image analysis cache, avoiding repeated K-means computation
                 across sort runs.
+            include_videos: Also sort video files, extracting a single
+                representative (middle) frame via OpenCV to feed the same
+                K-means/grayscale pipeline used for images (requires
+                opencv-python-headless). Default: False.
         """
         self.source_dir = Path(source_dir)
-        self.supported = {
-            '.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.webp',
-        }
+        self.supported = resolve_extensions(
+            {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.webp'},
+            include_videos,
+            video_extensions=VIDEO_EXTENSIONS,
+        )
         # G1: lazy cache reference — avoids import-time side effects
         self._cache = get_cache() if use_cache else None
 
@@ -148,6 +154,46 @@ class ColorImageSorter:
             p for p in self.source_dir.iterdir()
             if p.is_file() and p.suffix.lower() in self.supported
         ]
+
+    @staticmethod
+    def _load_rgb_thumbnail_array(path: Path, size: tuple[int, int]):
+        """
+        Return a numpy RGB array of `path` thumbnailed to `size`.
+
+        For video files, extracts a single representative (middle) frame via
+        OpenCV first, then feeds it through the same thumbnail/RGB pipeline
+        used for images - so the existing K-means/grayscale logic downstream
+        needs no video-specific branching.
+        """
+        if path.suffix.lower() in VIDEO_EXTENSIONS:
+            from ..scanner.dependencies import HAS_VIDEO_SUPPORT, cv2
+
+            if not HAS_VIDEO_SUPPORT:
+                raise RuntimeError("opencv-python-headless not installed - cannot read video frames")
+
+            cap = cv2.VideoCapture(str(path))
+            try:
+                if not cap.isOpened():
+                    raise RuntimeError("Could not open video file")
+                frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, frame_count // 2))
+                ok, frame = cap.read()
+                if not ok or frame is None:
+                    raise RuntimeError("Could not read a representative frame")
+                img = Image.fromarray(frame[:, :, ::-1])  # BGR -> RGB
+            finally:
+                cap.release()
+
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            img.thumbnail(size, Image.Resampling.LANCZOS)
+            return np.array(img)
+
+        with Image.open(path) as img:
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            img.thumbnail(size, Image.Resampling.LANCZOS)
+            return np.array(img)
 
     def get_dominant_color(
         self,
@@ -190,20 +236,16 @@ class ColorImageSorter:
             return None
 
         try:
-            with Image.open(image_path) as img:
-                if img.mode != 'RGB':
-                    img = img.convert('RGB')
-                # 32×32 is statistically sufficient for dominant-color extraction
-                # and is ~22× less data than 150×150 with identical K-means results.
-                img.thumbnail((32, 32), Image.Resampling.LANCZOS)
-                pixels = np.array(img).reshape(-1, 3)
-                kmeans = KMeans(n_clusters=n_colors, random_state=42, n_init=3)
-                kmeans.fit(pixels)
-                colors = kmeans.cluster_centers_.astype(int)
-                if n_colors == 1:
-                    color = tuple(colors[0])
-                    return color
-                return [tuple(c) for c in colors]
+            # 32×32 is statistically sufficient for dominant-color extraction
+            # and is ~22× less data than 150×150 with identical K-means results.
+            pixels = self._load_rgb_thumbnail_array(image_path, (32, 32)).reshape(-1, 3)
+            kmeans = KMeans(n_clusters=n_colors, random_state=42, n_init=3)
+            kmeans.fit(pixels)
+            colors = kmeans.cluster_centers_.astype(int)
+            if n_colors == 1:
+                color = tuple(colors[0])
+                return color
+            return [tuple(c) for c in colors]
         except Exception as exc:
             logger.error(f"Error processing {image_path}: {exc}")
             return None
@@ -224,18 +266,15 @@ class ColorImageSorter:
             - Resizes to 100x100 for performance
         """
         try:
-            with Image.open(image_path) as img:
-                if img.mode == 'L':
-                    return True
-                if img.mode != 'RGB':
-                    img = img.convert('RGB')
-                # 32×32 matches get_dominant_color's thumbnail size and is
-                # statistically equivalent for channel-difference std deviation.
-                img.thumbnail((32, 32), Image.Resampling.LANCZOS)
-                arr = np.array(img)
-                r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
-                avg_std = (np.std(r - g) + np.std(g - b) + np.std(r - b)) / 3
-                return avg_std < threshold
+            # 32×32 matches get_dominant_color's thumbnail size and is
+            # statistically equivalent for channel-difference std deviation.
+            # (A grayscale-mode image simply produces r==g==b here, so
+            # avg_std comes out ~0 and is caught by the threshold below same
+            # as the old dedicated `mode == 'L'` shortcut did.)
+            arr = self._load_rgb_thumbnail_array(image_path, (32, 32))
+            r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+            avg_std = (np.std(r - g) + np.std(g - b) + np.std(r - b)) / 3
+            return avg_std < threshold
         except Exception:
             return False
 
@@ -527,11 +566,38 @@ def _get_orientation(width: int, height: int) -> str:
     return 'landscape' if width > height else 'portrait'
 
 
+def _get_video_dimensions(fp: Path) -> tuple[int, int]:
+    """
+    Read (width, height) from a video file via OpenCV.
+
+    Raises if opencv isn't installed or the file can't be opened/decoded -
+    callers should catch broadly, matching how PIL.Image.open() failures are
+    handled for images.
+    """
+    from ..scanner.dependencies import HAS_VIDEO_SUPPORT, cv2
+
+    if not HAS_VIDEO_SUPPORT:
+        raise RuntimeError("opencv-python-headless not installed - cannot read video dimensions")
+
+    cap = cv2.VideoCapture(str(fp))
+    try:
+        if not cap.isOpened():
+            raise RuntimeError("Could not open video file")
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        if width <= 0 or height <= 0:
+            raise RuntimeError("Could not read video dimensions")
+        return width, height
+    finally:
+        cap.release()
+
+
 def sort_by_resolution(
     directory: str | Path,
     copy_files: bool = False,
     dry_run: bool = False,
     on_progress: Callable[[int, str], None] | None = None,
+    include_videos: bool = False,
 ) -> dict:
     """
     Sort images into subfolders by resolution category and orientation.
@@ -561,6 +627,8 @@ def sort_by_resolution(
         dry_run: Report what would happen without modifying files (default: False).
         on_progress: Optional callback ``(percent: int, message: str) -> None``
             called during processing to relay progress to callers.
+        include_videos: Also sort video files, reading dimensions via OpenCV
+            instead of PIL (requires opencv-python-headless). Default: False.
 
     Returns:
         Dictionary with keys:
@@ -570,10 +638,11 @@ def sort_by_resolution(
             - by_category: dict mapping ``"<category>/<orientation>"`` to file count
     """
     source_dir = Path(directory).resolve()
+    exts = resolve_extensions(IMAGE_EXTENSIONS, include_videos, video_extensions=VIDEO_EXTENSIONS)
 
     image_files = [
         p for p in source_dir.iterdir()
-        if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
+        if p.is_file() and p.suffix.lower() in exts
     ]
 
     total = len(image_files)
@@ -590,8 +659,11 @@ def sort_by_resolution(
             on_progress(pct, f"Processing {i}/{total}: {fp.name}")
 
         try:
-            with Image.open(fp) as img:
-                width, height = img.size
+            if fp.suffix.lower() in VIDEO_EXTENSIONS:
+                width, height = _get_video_dimensions(fp)
+            else:
+                with Image.open(fp) as img:
+                    width, height = img.size
         except Exception as exc:
             logger.warning(f"Cannot read {fp.name}: {exc}")
             stats['skipped'] += 1

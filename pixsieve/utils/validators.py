@@ -7,9 +7,12 @@ and scan parameter validation.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 def validate_path_in_directory(filepath: str, base_directory: str) -> bool:
@@ -37,7 +40,13 @@ def validate_path_in_directory(filepath: str, base_directory: str) -> bool:
         base_resolved = Path(base_directory).resolve()
         return str(file_resolved).startswith(str(base_resolved) + os.sep) or \
                str(file_resolved) == str(base_resolved)
-    except Exception:
+    except OSError as exc:
+        # This backs every path-traversal check in the app (via
+        # validate_path_in_any_directory / is_path_reference_protected), so
+        # log it: a resolve() failure for an unexpected reason (an exotic
+        # malformed path) should be distinguishable in the logs from the
+        # normal "resolved fine, just outside the directory" False above.
+        logger.warning(f"Path validation failed for {filepath!r} against {base_directory!r}: {exc}")
         return False
 
 
@@ -185,10 +194,88 @@ def validate_scan_params(
     return True, ""
 
 
+def validate_directories(entries: list[dict]) -> tuple[bool, str]:
+    """
+    Validate a list of {'path': str, 'is_reference': bool} entries.
+
+    Each path is validated independently via validate_directory(). At most
+    one entry may have is_reference=True - this is re-checked here as
+    defense in depth even though the API schema layer already enforces it,
+    since this function may be called from other contexts (e.g. CLI) that
+    bypass the Pydantic schema.
+
+    Args:
+        entries: List of directory entry dicts
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    if not entries:
+        return False, "At least one directory is required"
+
+    ref_count = 0
+    for entry in entries:
+        is_valid, error = validate_directory(entry.get('path', ''))
+        if not is_valid:
+            return False, error
+        if entry.get('is_reference'):
+            ref_count += 1
+
+    if ref_count > 1:
+        return False, "At most one directory may be marked as reference"
+
+    return True, ""
+
+
+def validate_path_in_any_directory(filepath: str, directories: list[dict]) -> bool:
+    """
+    Validate that a file path is within ANY of the given directories.
+
+    Replaces validate_path_in_directory() for the multi-root scan case.
+
+    Args:
+        filepath: Path to validate
+        directories: List of {'path': str, 'is_reference': bool} entries
+
+    Returns:
+        True if filepath resolves under any of the given directories
+    """
+    return any(
+        validate_path_in_directory(filepath, entry['path'])
+        for entry in directories
+    )
+
+
+def is_path_reference_protected(filepath: str, directories: list[dict]) -> bool:
+    """
+    Check whether a file path falls under the configured reference folder.
+
+    This is the hard server-side guard: callers performing mutating
+    operations (delete, move, convert, etc.) must reject any path for which
+    this returns True, regardless of what the client submitted or what the
+    session's selections claim.
+
+    Args:
+        filepath: Path to check
+        directories: List of {'path': str, 'is_reference': bool} entries
+
+    Returns:
+        True if filepath resolves under the directory entry flagged
+        is_reference=True. False if no reference directory is configured.
+    """
+    ref_entry = next((entry for entry in directories if entry.get('is_reference')), None)
+    if ref_entry is None:
+        return False
+    return validate_path_in_directory(filepath, ref_entry['path'])
+
+
 __all__ = [
     'validate_path_in_directory',
     'validate_file_accessible',
     'validate_directory',
     'validate_threshold',
     'validate_scan_params',
+    'validate_directories',
+    'validate_path_in_any_directory',
+    'is_path_reference_protected',
 ]

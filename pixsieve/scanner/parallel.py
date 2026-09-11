@@ -7,16 +7,63 @@ Provides parallel image analysis with caching, progress tracking, and callback s
 from __future__ import annotations
 
 import logging
+import os
+import queue
 import time
 import threading
-from concurrent.futures import ThreadPoolExecutor, Future, as_completed
-from typing import Optional, Callable, Any, Iterable
+from concurrent.futures import ThreadPoolExecutor, Future, as_completed, wait as futures_wait
+from typing import Optional, Callable, Any, Iterable, Union
 
-from ..config import DEFAULT_WORKERS
+from ..config import DEFAULT_WORKERS, SLOW_FILE_WARN_SECONDS, WRITE_BATCH_SIZE, VIDEO_EXTENSIONS
 from ..database import get_cache, CacheStats
 from ..models import ImageInfo
 from .analysis import analyze_image
+from .video_analysis import analyze_video
 from .dependencies import HAS_TQDM, _tqdm_class
+
+_logger = logging.getLogger(__name__)
+
+# AnalyzeFn signature shared by analyze_image() and analyze_video(): both take
+# (filepath, calculate_phash, calculate_hash) and return an ImageInfo. Kept as
+# a plain Callable type hint (no Protocol) to match the rest of this module's
+# typing style.
+AnalyzeFn = Callable[[str, bool, bool], ImageInfo]
+
+
+def analyze_media(filepath: str, calculate_phash: bool = True, calculate_hash: bool = True) -> ImageInfo:
+    """
+    Dispatch to analyze_image() or analyze_video() based on file extension.
+
+    For use as the `analyze_fn` passed to analyze_images_streaming() when a
+    single chunk generator yields a mix of image and video paths (the API's
+    overlapped discovery+analysis path doesn't split paths into separate
+    per-type lists up front the way the CLI's sequential path does).
+    """
+    ext = os.path.splitext(filepath)[1].lower()
+    if ext in VIDEO_EXTENSIONS:
+        return analyze_video(filepath, calculate_phash, calculate_hash)
+    return analyze_image(filepath, calculate_phash, calculate_hash)
+
+
+def _analyze_with_slow_warning(
+    filepath: str,
+    calculate_hash: bool,
+    calculate_phash: bool = True,
+    analyze_fn: AnalyzeFn = analyze_image,
+) -> ImageInfo:
+    """
+    Wraps analyze_image()/analyze_video() with a timer so a single
+    pathological file (huge panorama, near-decompression-bomb, flaky
+    USB/network read) shows up as a WARNING log instead of just silently
+    eating time on a worker with no visible symptom besides an unexplained
+    slow scan.
+    """
+    start = time.monotonic()
+    info = analyze_fn(filepath, calculate_phash, calculate_hash)
+    elapsed = time.monotonic() - start
+    if elapsed >= SLOW_FILE_WARN_SECONDS:
+        _logger.warning(f"Slow file: {filepath} took {elapsed:.1f}s to analyze")
+    return info
 
 
 def analyze_images_parallel(
@@ -27,8 +74,10 @@ def analyze_images_parallel(
     logger: Optional[logging.Logger] = None,
     use_cache: bool = True,
     calculate_hash: bool = True,
+    calculate_phash: bool = True,
     max_queued_futures: Optional[int] = None,
     stream_to_cache: bool = False,
+    analyze_fn: AnalyzeFn = analyze_image,
 ) -> tuple[list[ImageInfo], CacheStats]:
     """
     Analyze multiple images in parallel with optional caching.
@@ -41,6 +90,11 @@ def analyze_images_parallel(
         logger: Optional logger for status messages
         use_cache: Whether to use SQLite caching
         calculate_hash: Whether to compute file hash (for exact duplicate detection)
+        calculate_phash: Whether to compute perceptual hash (for similarity
+            matching). Pass False when only exact-hash duplicates will be
+            searched for (e.g. exact_only mode) to skip the image decode +
+            thumbnail + pHash cost entirely — it would otherwise be computed
+            and then never used.
         max_queued_futures: D3 - maximum number of futures held in memory at once.
             Defaults to max_workers * 4. Prevents unbounded memory growth for
             very large file lists (650K+) by backpressuring submission.
@@ -50,6 +104,9 @@ def analyze_images_parallel(
             single get_batch() call. This reduces peak RAM usage by ~100–200 MB
             for very large collections (100K+ files) by never holding the full
             result list in memory during the analysis phase.
+        analyze_fn: Per-file analysis function - analyze_image() (default) or
+            analyze_video(). Shares this function's caching/threading/progress
+            machinery, which is agnostic to what a single file's analysis does.
 
     Returns:
         Tuple of (list of ImageInfo objects, CacheStats)
@@ -117,7 +174,7 @@ def analyze_images_parallel(
             def _submit_bounded(path: str) -> Future:
                 """Submit after acquiring a semaphore slot; released on completion."""
                 semaphore.acquire()
-                fut = executor.submit(analyze_image, path, True, calculate_hash)
+                fut = executor.submit(_analyze_with_slow_warning, path, calculate_hash, calculate_phash, analyze_fn)
                 future_to_path[fut] = path
                 fut.add_done_callback(lambda _: semaphore.release())
                 return fut
@@ -178,29 +235,52 @@ def analyze_images_streaming(
     logger: Optional[logging.Logger] = None,
     use_cache: bool = True,
     calculate_hash: bool = True,
+    calculate_phash: Union[bool, Callable[[], bool]] = True,
     discovered_callback: Optional[Callable[[int], None]] = None,
+    cancel_check: Optional[Callable[[], bool]] = None,
+    analyze_fn: AnalyzeFn = analyze_image,
 ) -> tuple[list[ImageInfo], CacheStats]:
     """
-    Analyze images from a chunked discovery generator, processing each chunk
-    as soon as it is discovered rather than waiting for full file enumeration.
+    Analyze images from a chunked discovery generator, overlapping analysis
+    with discovery instead of waiting for the full file enumeration to finish.
 
-    This is the large-library variant of analyze_images_parallel. It accepts
-    the generator returned by iter_image_chunks() and feeds chunks to the
-    ThreadPoolExecutor as they arrive, so analysis of chunk N begins while
-    chunk N+1 is still being discovered.
+    This is the large-library variant of analyze_images_parallel. A dedicated
+    producer thread walks the generator (e.g. from iter_image_chunks()),
+    looks up each chunk in the cache, and submits cache misses to the
+    ThreadPoolExecutor - all without waiting for previously-submitted files to
+    finish first (only bounded by the in-flight-futures semaphore below).
+    Each future's completion is pushed onto a queue that the calling thread
+    drains continuously. This means directory-walking I/O (often the
+    bottleneck on slow/removable media) and image analysis genuinely run
+    concurrently, rather than the previous chunk-at-a-time
+    discover/analyze/discover/analyze ordering, which took the same total
+    wall time as discovering everything up front.
 
     Args:
         chunk_generator: Iterable of path-lists, e.g. from iter_image_chunks()
         max_workers: Number of parallel workers
         progress_callback: Optional callback(current, total) — total is 0 until
             discovery is complete, after which it reflects the true count.
-        show_progress: Whether to show tqdm progress bar (disabled when total unknown)
+        show_progress: Whether to show a tqdm bar (indeterminate until the
+            true total is known, since discovery isn't complete up front).
         logger: Optional logger for status messages
         use_cache: Whether to use SQLite caching
         calculate_hash: Whether to compute file hash
+        calculate_phash: Whether to compute perceptual hash (see
+            analyze_images_parallel for when to disable this). May also be a
+            zero-arg callable, re-evaluated once per file right before
+            submission - lets a caller flip this mid-scan (e.g. once the
+            discovered count crosses a "this collection is huge, stop
+            computing pHashes" threshold) without waiting for discovery to
+            finish first, which the whole point of this function is to avoid.
         discovered_callback: Optional callback(count) called each time a new
             chunk is discovered, with the running total of discovered files.
             Useful for SSE progress events during the discovery stage.
+        cancel_check: Optional callable returning True once the caller wants
+            to stop. Checked by the producer thread between chunks so it can
+            exit promptly instead of walking the rest of the tree.
+        analyze_fn: Per-file analysis function - analyze_image() (default) or
+            analyze_video().
 
     Returns:
         Tuple of (list of ImageInfo objects, CacheStats)
@@ -209,70 +289,131 @@ def analyze_images_streaming(
     stats = CacheStats()
     cache = get_cache() if use_cache else None
 
-    all_newly_analyzed: list[ImageInfo] = []
     total_discovered = 0
     total_processed = 0
 
+    _SENTINEL = object()
+    # ('hit', ImageInfo) for cache hits, ('new', ImageInfo) for freshly
+    # analyzed files - tagged so the harvester below only ever writes
+    # freshly-analyzed results back to the cache.
+    result_queue: "queue.Queue" = queue.Queue()
+
+    # Bounds how many files may be in flight (submitted-but-not-completed) at
+    # once, so a discovery walk that runs far ahead of slow analysis (e.g. a
+    # cold external drive) can't queue up unbounded memory.
+    semaphore = threading.Semaphore(max_workers * 4)
+
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        for chunk in chunk_generator:
-            total_discovered += len(chunk)
-            stats.total_files += len(chunk)
+        all_futures: list[Future] = []
 
-            if discovered_callback:
-                discovered_callback(total_discovered)
+        def _on_done(fut: Future, path: str) -> None:
+            semaphore.release()
+            try:
+                info = fut.result()
+            except Exception as e:
+                info = ImageInfo(path=path, error=str(e))
+            result_queue.put(('new', info))
 
-            if logger:
-                logger.debug(f"Processing discovery chunk of {len(chunk)} files ({total_discovered} discovered so far)")
+        def _produce() -> None:
+            nonlocal total_discovered
+            try:
+                for chunk in chunk_generator:
+                    if cancel_check and cancel_check():
+                        break
 
-            # Cache lookup for this chunk
-            to_analyze_chunk: list[str] = []
-            if cache:
-                cached_results = cache.get_batch(chunk)
-                for fp in chunk:
-                    cached = cached_results.get(fp)
-                    if cached is not None:
-                        results.append(cached)
-                        stats.cache_hits += 1
-                        total_processed += 1
+                    total_discovered += len(chunk)
+                    stats.total_files += len(chunk)
+                    if discovered_callback:
+                        discovered_callback(total_discovered)
+                    if logger:
+                        logger.debug(
+                            f"Processing discovery chunk of {len(chunk)} files "
+                            f"({total_discovered} discovered so far)"
+                        )
+
+                    if cache:
+                        cached_results = cache.get_batch(chunk)
+                        to_submit = []
+                        for fp in chunk:
+                            cached = cached_results.get(fp)
+                            if cached is not None:
+                                stats.cache_hits += 1
+                                result_queue.put(('hit', cached))
+                            else:
+                                stats.cache_misses += 1
+                                to_submit.append(fp)
                     else:
-                        to_analyze_chunk.append(fp)
-                        stats.cache_misses += 1
-            else:
-                to_analyze_chunk = list(chunk)
-                stats.cache_misses += len(chunk)
+                        stats.cache_misses += len(chunk)
+                        to_submit = list(chunk)
 
-            if not to_analyze_chunk:
-                if progress_callback:
-                    progress_callback(total_processed, total_discovered)
-                continue
+                    for path in to_submit:
+                        # This is where a slow/removable source drive naturally
+                        # throttles discovery: once max_workers*4 files are
+                        # already in flight, we block here until analysis
+                        # frees a slot - discovery of the *next* chunk still
+                        # overlaps with analysis of files already submitted.
+                        semaphore.acquire()
+                        phash_flag = calculate_phash() if callable(calculate_phash) else calculate_phash
+                        fut = executor.submit(
+                            _analyze_with_slow_warning, path, calculate_hash, phash_flag, analyze_fn
+                        )
+                        all_futures.append(fut)
+                        fut.add_done_callback(lambda f, p=path: _on_done(f, p))
 
-            # Submit chunk to thread pool and collect results
-            future_to_path: dict[Future, str] = {}
-            for path in to_analyze_chunk:
-                fut = executor.submit(analyze_image, path, True, calculate_hash)
-                future_to_path[fut] = path
+                    if cancel_check and cancel_check():
+                        break
+            finally:
+                # Wait for every future this thread submitted before signalling
+                # "no more results" - the callbacks above have already been
+                # pushing completions into result_queue concurrently the whole
+                # time, so this wait costs nothing beyond the slowest
+                # already-running task.
+                futures_wait(all_futures)
+                result_queue.put(_SENTINEL)
 
-            newly_analyzed_chunk: list[ImageInfo] = []
-            for future in as_completed(future_to_path):
-                try:
-                    info = future.result()
-                except Exception as e:
-                    path = future_to_path[future]
-                    info = ImageInfo(path=path, error=str(e))
+        producer = threading.Thread(target=_produce, daemon=True, name="pixsieve-discovery")
+        producer.start()
 
-                results.append(info)
-                newly_analyzed_chunk.append(info)
-                total_processed += 1
+        pbar: Optional[Any] = None
+        if HAS_TQDM and show_progress and _tqdm_class is not None:
+            # Indeterminate at first (discovery isn't complete) - .total is
+            # updated as the running discovered count comes in below.
+            pbar = _tqdm_class(total=None, desc="Analyzing images", unit="img", ncols=80)
 
-                if progress_callback:
-                    current_time = time.time()
-                    if total_processed % 1000 == 0:
-                        progress_callback(total_processed, total_discovered)
+        newly_analyzed: list[ImageInfo] = []
+        while True:
+            item = result_queue.get()
+            if item is _SENTINEL:
+                break
+            kind, info = item
+            results.append(info)
+            total_processed += 1
 
-            if cache and newly_analyzed_chunk:
-                cache.put_batch(newly_analyzed_chunk)
+            if pbar is not None:
+                pbar.total = total_discovered or None
+                pbar.update(1)
 
-            all_newly_analyzed.extend(newly_analyzed_chunk)
+            if kind == 'new':
+                newly_analyzed.append(info)
+                # Flush to cache periodically rather than accumulating
+                # everything until the whole (possibly 800K+ file) scan
+                # finishes - keeps peak memory bounded and means a
+                # cancelled/interrupted scan still has most of its work
+                # cached for the next run.
+                if cache and len(newly_analyzed) >= WRITE_BATCH_SIZE:
+                    cache.put_batch(newly_analyzed)
+                    newly_analyzed = []
+
+            if progress_callback and total_processed % 1000 == 0:
+                progress_callback(total_processed, total_discovered)
+
+        if pbar is not None:
+            pbar.close()
+
+        if cache and newly_analyzed:
+            cache.put_batch(newly_analyzed)
+
+        producer.join(timeout=5.0)
 
     # Final progress callback
     if progress_callback:
@@ -287,4 +428,31 @@ def analyze_images_streaming(
     return results, stats
 
 
-__all__ = ['analyze_images_parallel', 'analyze_images_streaming']
+def analyze_videos_parallel(filepaths: list[str], **kwargs) -> tuple[list[ImageInfo], CacheStats]:
+    """
+    analyze_images_parallel(), but for video files - see that function for
+    all parameters. Reuses the exact same caching/threading/progress
+    machinery, only swapping the per-file analysis function.
+    """
+    kwargs.pop('analyze_fn', None)
+    return analyze_images_parallel(filepaths, analyze_fn=analyze_video, **kwargs)
+
+
+def analyze_videos_streaming(
+    chunk_generator: Iterable[list[str]], **kwargs
+) -> tuple[list[ImageInfo], CacheStats]:
+    """
+    analyze_images_streaming(), but for video files - see that function for
+    all parameters.
+    """
+    kwargs.pop('analyze_fn', None)
+    return analyze_images_streaming(chunk_generator, analyze_fn=analyze_video, **kwargs)
+
+
+__all__ = [
+    'analyze_images_parallel',
+    'analyze_images_streaming',
+    'analyze_videos_parallel',
+    'analyze_videos_streaming',
+    'analyze_media',
+]

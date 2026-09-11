@@ -17,9 +17,11 @@ Permission levels are checked and reported separately from corruption:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import shutil
+import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -167,9 +169,28 @@ def _detect_corruption(path: str) -> tuple[CorruptionType, Optional[str]]:
     return CorruptionType.NONE, None
 
 
-def _attempt_repair(path: str, corruption_type: CorruptionType) -> tuple[bool, list[str]]:
+@contextlib.contextmanager
+def _scratch_path(directory: Path):
+    """Yield a fresh empty temp file path in *directory*, removed on exit."""
+    fd, scratch = tempfile.mkstemp(dir=str(directory), prefix=".pixsieve_repair_check_")
+    os.close(fd)
+    try:
+        yield scratch
+    finally:
+        if os.path.exists(scratch):
+            os.remove(scratch)
+
+
+def _attempt_repair(
+    path: str, corruption_type: CorruptionType, dry_run: bool = False
+) -> tuple[bool, list[str]]:
     """
     Try to repair *path* in-place using up to three strategies.
+
+    When dry_run is True, every strategy is still fully attempted and
+    verified (writing candidate output to scratch files instead of *path*),
+    so the return value reflects what *would* happen -- but *path* itself
+    is never written to, replaced, or removed.
 
     Returns (success, list_of_attempted_strategy_names).
     """
@@ -179,21 +200,20 @@ def _attempt_repair(path: str, corruption_type: CorruptionType) -> tuple[bool, l
         return False, []
 
     attempts: list[str] = []
+    directory = Path(path).parent
 
-    # ------------------------------------------------------------------
-    # Strategy 1: Re-encode
-    # Open with LOAD_TRUNCATED_IMAGES=True, copy pixel data, save back.
-    # Handles truncated files and recovers clean pixel data.
-    # The _repair_lock ensures the global PIL flag is set/restored safely
-    # even when multiple threads call this concurrently.
-    # ------------------------------------------------------------------
-    attempts.append("re-encode")
-    try:
+    def _reencode_check(source_path: str, dest_path: str) -> bool:
+        """
+        Load *source_path* tolerating truncation, save to *dest_path*, and
+        return True iff the saved file passes corruption detection. The
+        _repair_lock ensures the global PIL flag is set/restored safely
+        even when multiple threads call this concurrently.
+        """
         with _repair_lock:
             old_setting = ImageFile.LOAD_TRUNCATED_IMAGES
             ImageFile.LOAD_TRUNCATED_IMAGES = True
             try:
-                with Image.open(path) as img:
+                with Image.open(source_path) as img:
                     img_copy = img.copy()
                     fmt = img.format or "JPEG"
             finally:
@@ -203,49 +223,57 @@ def _attempt_repair(path: str, corruption_type: CorruptionType) -> tuple[bool, l
         if fmt == "JPEG":
             save_kwargs = {"quality": 95, "subsampling": 0}
 
-        img_copy.save(path, format=fmt, **save_kwargs)
+        img_copy.save(dest_path, format=fmt, **save_kwargs)
+        return _detect_corruption(dest_path)[0] == CorruptionType.NONE
 
-        if _detect_corruption(path)[0] == CorruptionType.NONE:
-            return True, attempts
+    # ------------------------------------------------------------------
+    # Strategy 1: Re-encode
+    # Handles truncated files and recovers clean pixel data.
+    # ------------------------------------------------------------------
+    attempts.append("re-encode")
+    try:
+        if dry_run:
+            with _scratch_path(directory) as scratch:
+                if _reencode_check(path, scratch):
+                    return True, attempts
+        else:
+            if _reencode_check(path, path):
+                return True, attempts
     except Exception as exc:
         logger.debug(f"Re-encode failed for {path}: {exc}")
 
     # ------------------------------------------------------------------
     # Strategy 2: Strip EXIF then re-save
     # Useful when the pixel data is fine but the metadata block is broken.
+    # piexif.remove(src, new_file) writes the stripped copy to *new_file*
+    # instead of overwriting *src*, which dry_run relies on.
     # ------------------------------------------------------------------
     attempts.append("strip-exif")
     try:
         import piexif
-        piexif.remove(path)
 
-        # Re-encode after stripping to ensure a clean file
-        with _repair_lock:
-            old_setting = ImageFile.LOAD_TRUNCATED_IMAGES
-            ImageFile.LOAD_TRUNCATED_IMAGES = True
-            try:
-                with Image.open(path) as img:
-                    img_copy = img.copy()
-                    fmt = img.format or "JPEG"
-            finally:
-                ImageFile.LOAD_TRUNCATED_IMAGES = old_setting
-
-        save_kwargs = {"quality": 95, "subsampling": 0} if fmt == "JPEG" else {}
-        img_copy.save(path, format=fmt, **save_kwargs)
-
-        if _detect_corruption(path)[0] == CorruptionType.NONE:
-            return True, attempts
+        if dry_run:
+            with _scratch_path(directory) as exif_scratch, _scratch_path(directory) as reencode_scratch:
+                piexif.remove(path, exif_scratch)
+                if _reencode_check(exif_scratch, reencode_scratch):
+                    return True, attempts
+        else:
+            piexif.remove(path)
+            if _reencode_check(path, path):
+                return True, attempts
     except Exception as exc:
         logger.debug(f"Strip-EXIF repair failed for {path}: {exc}")
 
     # ------------------------------------------------------------------
     # Strategy 3: Format conversion to PNG (last resort)
     # Attempts to recover whatever pixel data PIL can read, saves as a
-    # clean PNG alongside the original, then replaces the original.
+    # clean PNG alongside the original, then replaces the original --
+    # unless dry_run, in which case the scratch PNG is only verified, not
+    # promoted to replace the original.
     # ------------------------------------------------------------------
     attempts.append("convert-png")
     stem = Path(path).stem
-    png_path = str(Path(path).parent / f"{stem}_repaired.png")
+    png_path = str(directory / f"{stem}_repaired.png")
     try:
         with _repair_lock:
             old_setting = ImageFile.LOAD_TRUNCATED_IMAGES
@@ -259,16 +287,15 @@ def _attempt_repair(path: str, corruption_type: CorruptionType) -> tuple[bool, l
         rgb.save(png_path, format="PNG")
 
         if _detect_corruption(png_path)[0] == CorruptionType.NONE:
+            if dry_run:
+                return True, attempts  # scratch png_path is removed in finally below
             # Replace original with the repaired PNG
             os.remove(path)
             os.rename(png_path, path.rsplit(".", 1)[0] + ".png")
             return True, attempts
-
-        # Clean up failed attempt
-        if os.path.exists(png_path):
-            os.remove(png_path)
     except Exception as exc:
         logger.debug(f"Format-conversion repair failed for {path}: {exc}")
+    finally:
         if os.path.exists(png_path):
             try:
                 os.remove(png_path)
@@ -425,7 +452,7 @@ def scan_and_repair(
                     " [read-only: cannot repair in-place]"
                 return result
 
-            success, repair_attempts = _attempt_repair(path, corruption_type)
+            success, repair_attempts = _attempt_repair(path, corruption_type, dry_run=dry_run)
             result.repair_attempts = repair_attempts
 
             if success:

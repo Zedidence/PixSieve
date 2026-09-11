@@ -12,9 +12,10 @@ from pathlib import Path
 
 from .rename import rename_random
 from .convert import batch_convert_to_jpg
-from .metadata import randomize_exif_dates, randomize_file_dates
+from .metadata import randomize_dates
 from .cleanup import delete_empty_folders
 from .repair import scan_and_repair
+from ..config import IMAGE_EXTENSIONS, resolve_extensions
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +29,8 @@ AVAILABLE_STEPS = {
         'label': 'Convert PNG/BMP/WEBP to JPG',
         'func': 'convert_jpg',
     },
-    'randomize_exif': {
-        'label': 'Randomize EXIF dates (Date Taken)',
-        'func': 'randomize_exif',
-    },
     'randomize_dates': {
-        'label': 'Randomize file system dates',
+        'label': 'Randomize image dates (EXIF + filesystem)',
         'func': 'randomize_dates',
     },
     'cleanup_empty': {
@@ -58,6 +55,7 @@ def run_pipeline(
     recursive: bool = True,
     dry_run: bool = False,
     trash_dir: str | None = None,
+    include_videos: bool = False,
 ) -> dict[str, dict]:
     """
     Execute a sequence of operations on directory.
@@ -74,6 +72,10 @@ def run_pipeline(
         dry_run: Only report, don't modify files (default: False)
         trash_dir: Destination folder for quarantined corrupt images.
             Required when 'repair_corrupt' is included in steps.
+        include_videos: Also process video files for steps that support it
+            ('random_rename', 'randomize_dates' - filesystem dates only for
+            the latter). Has no effect on 'convert_jpg' or 'repair_corrupt',
+            which do not support video.
 
     Returns:
         Dictionary mapping step names to their result dictionaries
@@ -92,7 +94,7 @@ def run_pipeline(
 
     Notes:
         - Steps are executed in order
-        - Date steps (randomize_exif, randomize_dates) require start_date and end_date
+        - Date step (randomize_dates) requires start_date and end_date
         - repair_corrupt step requires trash_dir
         - Unknown steps will cause pipeline to abort
         - Each step's results are printed during execution
@@ -109,7 +111,7 @@ def run_pipeline(
             return {}
 
     # Check date requirements
-    date_steps = {'randomize_exif', 'randomize_dates'}
+    date_steps = {'randomize_dates'}
     if date_steps & set(steps):
         if start_date is None or end_date is None:
             logger.error("start_date and end_date are required for date-related steps")
@@ -136,6 +138,7 @@ def run_pipeline(
             results[step] = rename_random(
                 directory,
                 name_length=name_length,
+                extensions=resolve_extensions(IMAGE_EXTENSIONS, include_videos),
                 recursive=recursive,
                 dry_run=dry_run,
             )
@@ -149,22 +152,14 @@ def run_pipeline(
                 dry_run=dry_run,
             )
 
-        elif step == 'randomize_exif':
-            results[step] = randomize_exif_dates(
-                directory,
-                start_date,
-                end_date,
-                recursive=recursive,
-                dry_run=dry_run,
-            )
-
         elif step == 'randomize_dates':
-            results[step] = randomize_file_dates(
+            results[step] = randomize_dates(
                 directory,
                 start_date,
                 end_date,
                 recursive=recursive,
                 dry_run=dry_run,
+                extensions=resolve_extensions(IMAGE_EXTENSIONS, include_videos),
             )
 
         elif step == 'cleanup_empty':

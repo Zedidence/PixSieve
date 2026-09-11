@@ -7,13 +7,14 @@ and _BackgroundWriter for F1 queue-based async writes.
 
 from __future__ import annotations
 
+import atexit
 import logging
 import queue
 import sqlite3
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable, Generator
+from typing import Callable, Generator, Optional
 
 _log = logging.getLogger(__name__)
 
@@ -38,19 +39,50 @@ class _BackgroundWriter:
             target=self._run, daemon=True, name="pixsieve-db-writer"
         )
         self._thread.start()
+        self._closed = False
 
     def enqueue(self, fn: Callable[[sqlite3.Connection], None]) -> None:
         """Submit a write callable for async execution. Returns immediately."""
         self._queue.put(fn)
 
-    def flush(self) -> None:
-        """Block until all previously enqueued writes have been committed."""
+    def flush(self, timeout: Optional[float] = 30.0) -> bool:
+        """
+        Block until all previously enqueued writes have been committed.
+
+        Args:
+            timeout: Max seconds to wait. The writer thread is a daemon, so
+                if it has already been abandoned by interpreter shutdown (see
+                close()) nothing will ever signal completion - without a
+                timeout this would wait forever. Pass None only when the
+                caller can guarantee the writer thread is still running.
+
+        Returns:
+            True if the flush was acknowledged, False if it timed out.
+        """
         done = threading.Event()
         self._queue.put(done)
-        done.wait()
+        acknowledged = done.wait(timeout)
+        if not acknowledged:
+            _log.warning(
+                f"Background writer flush timed out after {timeout}s - the "
+                f"writer thread may have already exited (e.g. during "
+                f"interpreter shutdown, where daemon threads are abandoned "
+                f"before __del__ runs)"
+            )
+        return acknowledged
 
     def close(self) -> None:
-        """Flush pending writes and stop the background thread."""
+        """Flush pending writes and stop the background thread.
+
+        Safe to call more than once (e.g. once proactively via atexit during
+        a normal shutdown, and again from ConnectionManager.__del__ as a
+        fallback): the second call is a fast no-op rather than re-attempting
+        (and re-timing-out) a flush the thread is no longer around to
+        acknowledge.
+        """
+        if self._closed:
+            return
+        self._closed = True
         self.flush()
         self._queue.put(self._SENTINEL)
         self._thread.join(timeout=5.0)
@@ -169,7 +201,28 @@ class ConnectionManager:
         # F1: background writer for async/batched writes
         self._bg_writer = _BackgroundWriter(db_path)
 
+        # Proactively flush and stop the writer thread on normal interpreter
+        # shutdown. atexit callbacks run early in shutdown, while daemon
+        # threads are still alive and scheduled - relying on __del__ alone is
+        # unreliable here, since it only fires once GC clears this object's
+        # last reference (e.g. a module-level singleton, cleared during
+        # module teardown), which happens *after* CPython has already
+        # abandoned daemon threads. By then the writer thread is gone and
+        # __del__'s flush() would otherwise wait forever for an
+        # acknowledgement nothing can ever send (see flush()'s timeout).
+        atexit.register(self._bg_writer.close)
+
     def __del__(self) -> None:
+        # Best-effort: undo the atexit registration above so it doesn't keep
+        # this object (and its bound method) alive/referenced past its
+        # natural lifetime when closed normally (e.g. explicit del, or a test
+        # tearing down its own ImageCache instance) rather than at process
+        # exit. Not required for correctness - atexit.unregister() is a
+        # harmless no-op if the hook already ran or was never registered.
+        try:
+            atexit.unregister(self._bg_writer.close)
+        except Exception:
+            pass
         try:
             self._bg_writer.close()
         except Exception:

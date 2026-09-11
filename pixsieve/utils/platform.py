@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import platform as platform_module
+import shutil
 from pathlib import Path
 
 
@@ -118,8 +119,26 @@ def check_symlink_support(dest_dir: Path) -> tuple[bool, str]:
     return True, ""
 
 
+def check_exiftool_available() -> tuple[bool, str]:
+    """
+    Check whether the exiftool binary is available on PATH.
+
+    Returns:
+        Tuple of (is_available, reason_if_not)
+        - (True, "") if exiftool is found
+        - (False, reason) if not found, with install guidance in the reason
+    """
+    if shutil.which("exiftool"):
+        return True, ""
+    return False, (
+        "exiftool not found on PATH. Install it from https://exiftool.org/ "
+        "and ensure it is on PATH."
+    )
+
+
 __all__ = [
     'is_windows_admin',
     'check_hardlink_support',
     'check_symlink_support',
+    'check_exiftool_available',
 ]

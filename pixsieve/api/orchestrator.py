@@ -14,23 +14,25 @@ from typing import Callable, Optional
 
 from ..state import ScanState, HistoryManager
 from ..scanner import (
-    find_image_files,
-    iter_image_chunks,
-    analyze_images_parallel,
+    iter_image_chunks_multi,
+    analyze_images_streaming,
+    analyze_media,
     find_exact_duplicates,
     find_perceptual_duplicates,
+    find_video_perceptual_duplicates,
 )
 from ..models import ImageInfo, DuplicateGroup
 from ..database import CacheStats
-from ..config import LSH_AUTO_THRESHOLD
+from ..config import (
+    LSH_AUTO_THRESHOLD,
+    LARGE_LIBRARY_WORKERS,
+    PERCEPTUAL_AUTO_DISABLE_THRESHOLD,
+    DEFAULT_API_WORKERS,
+)
 from ..utils import formatters, selection
 
 # Module logger
 _logger = logging.getLogger(__name__)
-
-# Threshold for auto-disabling perceptual matching in GUI
-# Perceptual matching is O(n²), so 50K images = 1.25 billion comparisons
-PERCEPTUAL_AUTO_DISABLE_THRESHOLD = 50000
 
 
 class ProgressTracker:
@@ -187,7 +189,7 @@ class ScanOrchestrator:
     def __init__(
         self,
         scan_state: ScanState,
-        directory: str,
+        directories: list[dict],
         threshold: int,
         exact_only: bool,
         perceptual_only: bool,
@@ -195,7 +197,9 @@ class ScanOrchestrator:
         use_cache: bool = True,
         use_lsh: Optional[bool] = None,
         workers: int = 4,
+        resolve_symlinks: bool = True,
         auto_select_strategy: str = 'quality',
+        include_videos: bool = False,
         save_callback: Optional[Callable[[], None]] = None,
     ):
         """
@@ -203,7 +207,9 @@ class ScanOrchestrator:
 
         Args:
             scan_state: Shared scan state object
-            directory: Directory to scan
+            directories: List of {'path': str, 'is_reference': bool} entries,
+                already validated by the caller. At most one entry may have
+                is_reference=True.
             threshold: Perceptual hash threshold
             exact_only: Only find exact duplicates
             perceptual_only: Only find perceptual duplicates
@@ -211,11 +217,21 @@ class ScanOrchestrator:
             use_cache: Use SQLite caching
             use_lsh: Force LSH on/off (None = auto)
             workers: Number of parallel workers
+            resolve_symlinks: Canonicalize each discovered path and dedupe
+                files reachable via multiple symlinks. Costs one extra
+                filesystem round-trip per file during discovery - disabling
+                it is a real speedup on drives with no symlinks (most
+                external/removable media), especially over slower interfaces
+                like USB where per-syscall latency is higher.
             auto_select_strategy: Selection strategy
+            include_videos: Also discover/analyze/deduplicate video files
+                (requires opencv-python-headless; falls back to images-only
+                with a warning if not installed)
             save_callback: Callback to save state (thread-safe)
         """
         self.scan_state = scan_state
-        self.directory = directory
+        self.directories = directories
+        self.directory = directories[0]['path']  # back-compat: primary directory
         self.threshold = threshold
         self.exact_only = exact_only
         self.perceptual_only = perceptual_only
@@ -223,11 +239,16 @@ class ScanOrchestrator:
         self.use_cache = use_cache
         self.use_lsh = use_lsh
         self.workers = workers
+        self.resolve_symlinks = resolve_symlinks
         self.auto_select_strategy = auto_select_strategy
+        self.include_videos = include_videos
         self.save_callback = save_callback or (lambda: None)
 
         # Track if we auto-disabled perceptual
         self.auto_disabled_perceptual = False
+
+        # Side-channel populated by _discover_and_analyze(): path -> is_reference
+        self._path_is_reference: dict[str, bool] = {}
 
     def run(self) -> None:
         """
@@ -235,12 +256,18 @@ class ScanOrchestrator:
 
         This is the main entry point that orchestrates all scan phases.
         """
+        _logger.info(
+            f"Scan starting - dirs={[d['path'] for d in self.directories]} "
+            f"threshold={self.threshold} exact_only={self.exact_only} "
+            f"perceptual_only={self.perceptual_only} cache={self.use_cache} workers={self.workers}"
+        )
         try:
             # Initialize scan state
             self.scan_state.reset()
             self.scan_state.status = 'scanning'
             self.scan_state.stage = 'scanning'
             self.scan_state.directory = self.directory
+            self.scan_state.directories = self.directories
             self.scan_state.message = 'Scanning for image files...'
             self.scan_state.settings = {
                 'threshold': self.threshold,
@@ -250,22 +277,21 @@ class ScanOrchestrator:
                 'use_cache': self.use_cache,
                 'use_lsh': self.use_lsh,
                 'workers': self.workers,
+                'resolve_symlinks': self.resolve_symlinks,
                 'auto_select_strategy': self.auto_select_strategy,
+                'include_videos': self.include_videos,
             }
             self.scan_state.progress_details['start_time'] = time.time()
 
             # Save to history
-            HistoryManager.save_directory(self.directory)
+            for d in self.directories:
+                HistoryManager.save_directory(d['path'])
 
-            # Phase 1: Find images
-            image_files = self._find_images()
-            if image_files is None:
-                return  # Cancelled or no images found
-
-            # Phase 2: Analyze images
-            images, cache_stats = self._analyze_images(image_files)
-            if images is None:
-                return  # Cancelled or error
+            # Phases 1-2: Discover and analyze images (overlapped)
+            result = self._discover_and_analyze()
+            if result is None:
+                return  # Cancelled, no images found, or error
+            images, cache_stats = result
 
             # Phase 3: Find exact duplicates
             exact_groups, exact_hashes = self._find_exact_dupes(images)
@@ -273,7 +299,7 @@ class ScanOrchestrator:
                 return  # Cancelled
 
             # Phase 4: Find perceptual duplicates
-            perceptual_groups = self._find_perceptual_dupes(images, exact_hashes)
+            perceptual_groups = self._find_perceptual_dupes(images, exact_hashes, len(exact_groups))
             if perceptual_groups is None:
                 return  # Cancelled
 
@@ -286,12 +312,19 @@ class ScanOrchestrator:
             _logger.exception(f"Scan error: {e}")
             self.save_callback()
 
-    def _find_images(self) -> Optional[list[str]]:
+    def _discover_and_analyze(self) -> Optional[tuple[list[ImageInfo], CacheStats]]:
         """
-        Phase 1: Find image files in the directory.
+        Phases 1-2: Discover and analyze images, overlapped rather than
+        sequential.
+
+        Directory-walking (discovery) and image analysis now run
+        concurrently via analyze_images_streaming() instead of one fully
+        finishing before the other starts - for a very large or slow
+        (e.g. external/USB) source, the old sequential order meant the whole
+        directory walk had to complete before a single image was analyzed.
 
         Returns:
-            List of image file paths, or None if cancelled/empty
+            Tuple of (valid images, cache stats), or None if cancelled/empty
         """
         # Check for cancel
         if self.scan_state.cancel_requested:
@@ -300,113 +333,142 @@ class ScanOrchestrator:
             self.save_callback()
             return None
 
-        # Find images — stream chunks so the frontend sees live counts
-        image_files = []
-        last_update = time.time()
-        for chunk in iter_image_chunks(self.directory, recursive=self.recursive):
-            if self.scan_state.cancel_requested:
-                self.scan_state.status = 'cancelled'
-                self.scan_state.message = 'Scan cancelled by user'
-                self.save_callback()
-                return None
-            image_files.extend(chunk)
+        _logger.info(
+            f"Phase: discover+analyze - scanning {[d['path'] for d in self.directories]} "
+            f"(cache={'on' if self.use_cache else 'off'}, workers={self.workers})"
+        )
+        _phase_start = time.time()
+        analysis_start_time = _phase_start
+
+        # Reference root (if any) is walked first so files under a nested or
+        # overlapping reference folder are always attributed as reference.
+        roots = [
+            (d['path'], d['is_reference'])
+            for d in sorted(self.directories, key=lambda d: not d['is_reference'])
+        ]
+
+        def _chunks():
+            for chunk in iter_image_chunks_multi(
+                roots, recursive=self.recursive, resolve_symlinks=self.resolve_symlinks,
+                include_videos=self.include_videos,
+            ):
+                paths = []
+                for path, is_reference in chunk:
+                    self._path_is_reference[path] = is_reference
+                    paths.append(path)
+                yield paths
+
+        progress_tracker = ProgressTracker(self.scan_state, self.save_callback)
+        last_discovery_update = [time.time()]
+        entered_analyzing = [False]
+
+        def discovered_callback(count: int) -> None:
             now = time.time()
-            if now - last_update >= 0.5:
-                count = len(image_files)
+
+            # First chunk in: analysis of it has already begun by the time we
+            # find out about it, so flip to the 'analyzing' stage here rather
+            # than waiting for discovery to fully finish (which is exactly
+            # the wait this refactor removes).
+            if not entered_analyzing[0]:
+                entered_analyzing[0] = True
+                self.scan_state.status = 'analyzing'
+                self.scan_state.stage = 'analyzing'
+
+            if now - last_discovery_update[0] >= 0.5:
                 self.scan_state.total_files = count
                 self.scan_state.message = (
-                    f'Scanning for image files... {formatters.format_number(count)} found so far'
+                    f'Analyzing images... {formatters.format_number(count)} found so far'
                 )
                 self.scan_state.progress_details['elapsed_seconds'] = (
                     now - self.scan_state.progress_details['start_time']
                 )
-                last_update = now
+                last_discovery_update[0] = now
 
-        self.scan_state.total_files = len(image_files)
-        self.scan_state.progress_details['elapsed_seconds'] = (
-            time.time() - self.scan_state.progress_details['start_time']
-        )
+            # Auto-disable perceptual matching once the running discovered
+            # count crosses the threshold, unless LSH was explicitly forced
+            # on. Edge-triggered (checked via auto_disabled_perceptual) so it
+            # only ever fires once, and calculate_phash below (re-evaluated
+            # per file) picks up the flip immediately for every file
+            # submitted from this point on - no need to know the final total.
+            if (not self.auto_disabled_perceptual and not self.exact_only and not self.perceptual_only
+                    and count > PERCEPTUAL_AUTO_DISABLE_THRESHOLD and self.use_lsh is not True):
+                self.auto_disabled_perceptual = True
+                self.exact_only = True
 
-        if not image_files:
-            self.scan_state.status = 'complete'
-            self.scan_state.message = 'No images found in directory'
-            self.save_callback()
-            return None
+                warning_msg = (
+                    f'⚠️ LARGE COLLECTION DETECTED ({formatters.format_number(count)}+ images). '
+                    f'Perceptual matching has been automatically disabled. '
+                    f'Enable LSH in Advanced Options to process large collections with perceptual matching.'
+                )
+                self.scan_state.message = warning_msg
+                self.scan_state.settings['exact_only'] = True
+                self.scan_state.settings['auto_disabled_perceptual'] = True
+                self.save_callback()
+                time.sleep(3)
 
-        # Check if we should auto-disable perceptual matching
-        if (not self.exact_only and not self.perceptual_only and
-            len(image_files) > PERCEPTUAL_AUTO_DISABLE_THRESHOLD and self.use_lsh is not True):
-            self.auto_disabled_perceptual = True
-            self.exact_only = True
-
-            warning_msg = (
-                f'⚠️ LARGE COLLECTION DETECTED ({formatters.format_number(len(image_files))} images). '
-                f'Perceptual matching has been automatically disabled. '
-                f'Enable LSH in Advanced Options to process large collections with perceptual matching.'
-            )
-            self.scan_state.message = warning_msg
-            self.scan_state.settings['exact_only'] = True
-            self.scan_state.settings['auto_disabled_perceptual'] = True
-            self.save_callback()
-            time.sleep(3)
-
-        return image_files
-
-    def _analyze_images(self, filepaths: list[str]) -> Optional[tuple[list[ImageInfo], CacheStats]]:
-        """
-        Phase 2: Analyze images with progress tracking.
-
-        Args:
-            filepaths: List of image file paths
-
-        Returns:
-            Tuple of (valid images, cache stats), or None if cancelled
-        """
-        # Check for cancel
-        if self.scan_state.cancel_requested:
-            self.scan_state.status = 'cancelled'
-            self.scan_state.message = 'Scan cancelled by user'
-            self.save_callback()
-            return None
-
-        # Analyze images
-        self.scan_state.status = 'analyzing'
-        self.scan_state.stage = 'analyzing'
-        self.scan_state.message = f'Analyzing {formatters.format_number(len(filepaths))} images...'
-        self.save_callback()
-
-        analysis_start_time = time.time()
-
-        # Create progress tracker
-        progress_tracker = ProgressTracker(self.scan_state, self.save_callback)
-
-        def analysis_progress_callback(current: int, total: int):
+        def analysis_progress_callback(current: int, total: int) -> None:
+            if total <= 0:
+                return
             progress_tracker.update_analysis_progress(current, total, analysis_start_time)
 
-        # Use the cached parallel analyzer
-        images, cache_stats = analyze_images_parallel(
-            filepaths=filepaths,
-            max_workers=self.workers,
+        # Large-library worker scaling: since discovery and analysis now
+        # overlap, the total file count isn't known before the thread pool
+        # is created, so this can't be gated on a discovered-count threshold
+        # the way the CLI's (still sequential) path can. Instead, apply the
+        # large-library worker count whenever the caller left `workers` at
+        # its default - an explicit choice (e.g. deliberately throttling
+        # concurrency on a slow external drive) is never overridden.
+        effective_workers = self.workers
+        if self.workers == DEFAULT_API_WORKERS:
+            effective_workers = LARGE_LIBRARY_WORKERS
+            _logger.info(f"Workers left at default - using large-library default of {effective_workers}")
+
+        images, cache_stats = analyze_images_streaming(
+            _chunks(),
+            max_workers=effective_workers,
             progress_callback=analysis_progress_callback,
             show_progress=False,
             use_cache=self.use_cache,
+            calculate_phash=lambda: not self.exact_only,
+            discovered_callback=discovered_callback,
+            cancel_check=lambda: self.scan_state.cancel_requested,
+            logger=_logger,
+            analyze_fn=analyze_media,
         )
 
-        # Update cache stats in progress details
+        self.scan_state.total_files = cache_stats.total_files
+        self.scan_state.progress_details['elapsed_seconds'] = (
+            time.time() - self.scan_state.progress_details['start_time']
+        )
         self.scan_state.progress_details['cache_hits'] = cache_stats.cache_hits
         self.scan_state.progress_details['cache_misses'] = cache_stats.cache_misses
 
-        # Check for cancel
+        _logger.info(
+            f"Phase: discover+analyze done - {len(images):,} files in {time.time() - _phase_start:.1f}s"
+        )
+
         if self.scan_state.cancel_requested:
             self.scan_state.status = 'cancelled'
             self.scan_state.message = f'Scan cancelled (analyzed {formatters.format_number(len(images))} images)'
             self.save_callback()
             return None
 
-        # Log cache stats
+        if not images:
+            self.scan_state.status = 'complete'
+            self.scan_state.message = 'No images found in directory'
+            self.save_callback()
+            return None
+
         if cache_stats.cache_hits > 0:
             _logger.info(f"Cache: {cache_stats.cache_hits:,} hits, {cache_stats.cache_misses:,} misses "
                          f"({cache_stats.hit_rate:.1f}% hit rate)")
+
+        # Stamp is_reference on every image (cache-returned objects always
+        # default to False, since reference status is scan-local and never
+        # cached). Done before the valid/error split so error images are
+        # tagged too.
+        for img in images:
+            img.is_reference = self._path_is_reference.get(img.path, False)
 
         # Separate valid images from errors
         valid_images = [img for img in images if not img.error]
@@ -454,8 +516,16 @@ class ScanOrchestrator:
                 self.save_callback()
                 return None
 
+            _logger.info(f"Phase: exact-match - {len(images):,} images")
+            _phase_start = time.time()
+
             exact_groups = find_exact_duplicates(images)
             exact_hashes = {img.file_hash for g in exact_groups for img in g.images}
+
+            _logger.info(
+                f"Phase: exact-match done - {len(exact_groups):,} groups "
+                f"in {time.time() - _phase_start:.1f}s"
+            )
 
             self.scan_state.progress_details['exact_groups'] = len(exact_groups)
             exact_dupe_count = sum(len(g.images) - 1 for g in exact_groups)
@@ -473,7 +543,8 @@ class ScanOrchestrator:
     def _find_perceptual_dupes(
         self,
         images: list[ImageInfo],
-        exclude_hashes: set[str]
+        exclude_hashes: set[str],
+        exact_group_count: int = 0
     ) -> Optional[list[DuplicateGroup]]:
         """
         Phase 4: Find perceptual duplicates.
@@ -488,8 +559,15 @@ class ScanOrchestrator:
         perceptual_groups = []
 
         if not self.exact_only:
+            # Videos carry a "|"-joined multi-frame hash that image
+            # perceptual matching doesn't understand - matched separately
+            # via find_video_perceptual_duplicates() below.
+            image_candidates = [img for img in images if img.media_type != 'video']
+            video_candidates = [img for img in images if img.media_type == 'video'
+                                 and img.file_hash not in exclude_hashes]
+
             # Calculate expected comparisons for progress
-            candidates_count = len([img for img in images
+            candidates_count = len([img for img in image_candidates
                                    if img.perceptual_hash and img.file_hash not in exclude_hashes])
 
             # Determine if we'll use LSH
@@ -523,6 +601,10 @@ class ScanOrchestrator:
                 self.save_callback()
                 return None
 
+            _logger.info(
+                f"Phase: perceptual-match - {candidates_count:,} candidates "
+                f"(lsh={'on' if will_use_lsh else 'off'}, threshold={self.threshold})"
+            )
             comparison_start_time = time.time()
 
             # Create progress tracker
@@ -532,14 +614,29 @@ class ScanOrchestrator:
                 progress_tracker.update_comparison_progress(current, total, comparison_start_time)
 
             perceptual_groups = find_perceptual_duplicates(
-                images,
+                image_candidates,
                 threshold=self.threshold,
                 exclude_hashes=exclude_hashes,
-                start_id=len(self.scan_state.groups) + 1 if hasattr(self, 'exact_groups') else 1,
+                start_id=exact_group_count + 1 if exact_group_count else 1,
                 progress_callback=comparison_progress_callback,
                 show_progress=False,
                 use_lsh=self.use_lsh,
+                logger=_logger,
             )
+
+            _logger.info(
+                f"Phase: perceptual-match done - {len(perceptual_groups):,} groups "
+                f"in {time.time() - comparison_start_time:.1f}s"
+            )
+
+            if video_candidates:
+                video_groups = find_video_perceptual_duplicates(
+                    video_candidates,
+                    threshold=self.threshold,
+                    start_id=exact_group_count + len(perceptual_groups) + 1,
+                )
+                perceptual_groups.extend(video_groups)
+                _logger.info(f"Phase: video-perceptual-match done - {len(video_groups):,} groups")
 
             self.scan_state.progress_details['perceptual_groups'] = len(perceptual_groups)
 
@@ -570,11 +667,15 @@ class ScanOrchestrator:
         self.scan_state.stage_progress = 100
         self.scan_state.status = 'complete'
 
-        # Apply auto-selection strategy
-        self.scan_state.selections = selection.apply_selection_strategy(
+        # Apply auto-selection strategy (reference-aware)
+        self.scan_state.selections = selection.resolve_group_selections(
             self.scan_state.groups,
             self.auto_select_strategy
         )
+        # Stamp the resolved keep choice back onto each group so
+        # DuplicateGroup.to_dict()'s quality-only fallback never gets a
+        # chance to disagree with what was actually resolved above.
+        selection.stamp_group_selections(self.scan_state.groups, self.scan_state.selections)
 
         # Build final summary message
         total_dupes = sum(len(g.images) - 1 for g in self.scan_state.groups)
@@ -596,6 +697,17 @@ class ScanOrchestrator:
 
         summary_parts.append(f'• Completed in {elapsed_str}')
 
+        # Show cache reuse stats
+        cache_hits = self.scan_state.progress_details.get('cache_hits', 0)
+        cache_misses = self.scan_state.progress_details.get('cache_misses', 0)
+        cache_total = cache_hits + cache_misses
+        if cache_hits > 0 and cache_total > 0:
+            pct = cache_hits / cache_total * 100
+            summary_parts.append(
+                f'• {formatters.format_number(cache_hits)}/{formatters.format_number(cache_total)} '
+                f'reused from cache ({pct:.0f}%)'
+            )
+
         error_count = len(self.scan_state.error_images) if self.scan_state.error_images else 0
         if error_count > 0:
             summary_parts.append(f'• {formatters.format_number(error_count)} files had errors')
@@ -605,6 +717,14 @@ class ScanOrchestrator:
 
         self.scan_state.message = ' '.join(summary_parts)
         self.scan_state.last_updated = datetime.now().isoformat()
+
+        # Plain-ASCII log line (the UI message above uses bullets/emoji that
+        # can mangle on non-UTF-8 Windows consoles when piped through logging)
+        _logger.info(
+            f"Scan complete - {total_dupes:,} duplicates in {len(self.scan_state.groups):,} groups, "
+            f"{elapsed_str} elapsed, {error_count} errors, "
+            f"cache {cache_hits:,}/{cache_total:,}"
+        )
 
         self.save_callback()
 

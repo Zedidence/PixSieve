@@ -30,7 +30,7 @@ class TestRunPipeline:
 
     def test_date_steps_without_dates_returns_empty(self, temp_dir):
         """Date steps without start/end dates return empty dict."""
-        results = run_pipeline(temp_dir, steps=['randomize_exif'])
+        results = run_pipeline(temp_dir, steps=['randomize_dates'])
         assert results == {}
 
     def test_start_after_end_returns_empty(self, temp_dir):
@@ -111,8 +111,8 @@ class TestAvailableSteps:
     def test_all_steps_defined(self):
         """All expected pipeline steps are registered."""
         expected = {
-            'random_rename', 'convert_jpg', 'randomize_exif',
-            'randomize_dates', 'cleanup_empty',
+            'random_rename', 'convert_jpg', 'randomize_dates',
+            'cleanup_empty', 'repair_corrupt',
         }
         assert set(AVAILABLE_STEPS.keys()) == expected
 

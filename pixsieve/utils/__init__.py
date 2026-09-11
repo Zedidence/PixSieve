@@ -28,9 +28,22 @@ from .validators import (
     validate_directory,
     validate_threshold,
     validate_scan_params,
+    validate_directories,
+    validate_path_in_any_directory,
+    is_path_reference_protected,
 )
-from .selection import SelectionStrategy, apply_selection_strategy
-from .platform import is_windows_admin, check_hardlink_support, check_symlink_support
+from .selection import (
+    SelectionStrategy,
+    apply_selection_strategy,
+    resolve_group_selections,
+    group_keep_and_delete,
+)
+from .platform import (
+    is_windows_admin,
+    check_hardlink_support,
+    check_symlink_support,
+    check_exiftool_available,
+)
 from .exporters import export_results
 from .operations import (
     get_unique_path,
@@ -59,13 +72,19 @@ __all__ = [
     'validate_directory',
     'validate_threshold',
     'validate_scan_params',
+    'validate_directories',
+    'validate_path_in_any_directory',
+    'is_path_reference_protected',
     # Selection
     'SelectionStrategy',
     'apply_selection_strategy',
+    'resolve_group_selections',
+    'group_keep_and_delete',
     # Platform
     'is_windows_admin',
     'check_hardlink_support',
     'check_symlink_support',
+    'check_exiftool_available',
     # Exporters
     'export_results',
     # Operations

@@ -34,7 +34,12 @@ dependencies = [
     "imagehash>=4.0.0",
     "flask>=2.0.0",
     "numpy>=1.20.0",
+    "pillow-heif>=0.10.0",
+    "scikit-learn>=1.0.0",
     "piexif>=1.0.0",
+    "tqdm>=4.0.0",
+    "pydantic>=2.0.0",
+    "flasgger>=0.9.7",
 ]
 
 [project.optional-dependencies]
@@ -45,8 +50,12 @@ dev = [
     "ruff>=0.1.0",
     "mypy>=1.0.0",
 ]
-progress = [
-    "tqdm>=4.0.0",
+e2e = [
+    "playwright>=1.40.0",
+    "pytest-playwright>=0.4.0",
+]
+video = [
+    "opencv-python-headless>=4.5.0",
 ]
 
 [project.urls]
@@ -69,10 +78,17 @@ include = ["pixsieve*"]
 exclude = ["tests*"]
 
 [tool.setuptools.package-data]
-pixsieve = ["templates/*.html"]
+pixsieve = [
+    "templates/*.html",
+    "static/css/*.css",
+    "static/js/*.js",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# E2E tests require a running server — run separately:
+#   pytest tests/e2e/ --base-url http://localhost:5000
+
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

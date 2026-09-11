@@ -140,6 +140,31 @@ def ops_temp_dir(temp_dir):
 
 
 @pytest.fixture
+def make_video_clip():
+    """
+    Factory fixture: make_video_clip(path, size=(64, 48), color=(0, 0, 255))
+    writes a tiny real .mp4 via OpenCV (same approach as test_video.py's
+    _make_test_clip). Only usable where opencv-python-headless is installed;
+    tests using this should be marked
+    @pytest.mark.skipif(not HAS_VIDEO_SUPPORT, ...).
+    """
+    def _make(path, num_frames=10, size=(64, 48), color=(0, 0, 255)):
+        import numpy as np
+        from pixsieve.scanner.dependencies import cv2
+
+        writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*'mp4v'), 10, size)
+        try:
+            frame = np.full((size[1], size[0], 3), color, dtype=np.uint8)
+            for _ in range(num_frames):
+                writer.write(frame)
+        finally:
+            writer.release()
+        return Path(path)
+
+    return _make
+
+
+@pytest.fixture
 def flask_client():
     """Flask test client for API endpoint tests."""
     from pixsieve.app import create_app, LOG_QUIET

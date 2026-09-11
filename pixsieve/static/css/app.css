@@ -16,7 +16,7 @@
   --border:        #2a2a2a;
   --border-subtle: #1f1f1f;
   --text:          #e8e8e8;
-  --text-muted:    #666;
+  --text-muted:    #888;
   --text-faint:    #3a3a3a;
 
   /* Single accent: amber (replaces blue+purple gradient duo) */
@@ -35,10 +35,31 @@
   --sp-4: 16px;  --sp-5: 20px;  --sp-6: 24px;
   --sp-8: 32px;  --sp-12: 48px;
 
+  /* Aliases for variables referenced elsewhere */
+  --card:      var(--bg-overlay);
+  --input-bg:  var(--bg-overlay);
+  --muted:     var(--text-muted);
+  --surface-2: var(--bg-raised);
+
   /* Border radii — tighter than the AI-generated default */
   --r-sm: 3px;
   --r-md: 6px;
   --r-lg: 10px;
+}
+
+/* Light theme override */
+[data-theme="light"] {
+  --bg-base:       #f5f5f5;
+  --bg-raised:     #ffffff;
+  --bg-overlay:    #ebebeb;
+  --border:        #d4d4d4;
+  --border-subtle: #e0e0e0;
+  --text:          #1a1a1a;
+  --text-muted:    #666;
+  --text-faint:    #b0b0b0;
+  --accent:        #d48c0c;
+  --accent-dim:    rgba(212, 140, 12, 0.10);
+  --accent-glow:   rgba(212, 140, 12, 0.20);
 }
 
 /* ============================================================
@@ -71,6 +92,29 @@ header {
     padding: 30px 0;
     border-bottom: 1px solid var(--border);
     margin-bottom: 30px;
+    position: relative;
+}
+
+.theme-toggle {
+    position: absolute;
+    top: 50%;
+    right: 0;
+    transform: translateY(-50%);
+    background: var(--bg-overlay);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    color: var(--text);
+    font-size: 1.2rem;
+    width: 38px;
+    height: 38px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+}
+.theme-toggle:hover {
+    background: var(--accent-dim);
 }
 
 header h1 {
@@ -214,7 +258,7 @@ header p {
     display: block;
     margin-bottom: 8px;
     font-weight: 500;
-    color: #ccc;
+    color: var(--text);
 }
 
 .form-group input[type="text"],
@@ -664,7 +708,7 @@ header p {
 .view-btn {
     padding: 5px 11px;
     border: none;
-    border-radius: 4px;
+    border-radius: var(--r-sm);
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
@@ -763,7 +807,7 @@ header p {
 
 .group-badge {
     padding: 3px 10px;
-    border-radius: 4px;
+    border-radius: var(--r-sm);
     font-size: 0.75rem;
     font-weight: 600;
     text-transform: uppercase;
@@ -867,6 +911,27 @@ header p {
 .keep-badge   { background: var(--success); }
 .delete-badge { background: var(--danger); }
 
+.reference-badge {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    background: var(--warning);
+    color: #fff;
+    padding: 3px 8px;
+    border-radius: var(--r-sm);
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.image-card.reference-locked,
+.image-row.reference-locked,
+.compare-card.reference-locked {
+    border-color: var(--warning) !important;
+    cursor: not-allowed;
+}
+
 /* ============================================================
    List View
    ============================================================ */
@@ -897,7 +962,7 @@ header p {
     width: 64px;
     height: 64px;
     object-fit: cover;
-    border-radius: 4px;
+    border-radius: var(--r-sm);
     flex-shrink: 0;
     background: #111;
 }
@@ -953,6 +1018,14 @@ header p {
 
 .image-row-badge.keep   { background: var(--success); }
 .image-row-badge.delete { background: var(--danger); }
+
+/* Reference badge sits inline as a flex item in list view, unlike the
+   absolutely-positioned version used over grid/compare thumbnails. */
+.image-row .reference-badge {
+    position: static;
+    flex-shrink: 0;
+    margin-right: 4px;
+}
 
 /* ============================================================
    Compare View
@@ -1079,7 +1152,7 @@ header p {
 
 .error-image-path {
     font-size: 0.82rem;
-    color: #ccc;
+    color: var(--text);
     word-break: break-all;
     margin-bottom: 6px;
     font-family: var(--font-mono);
@@ -1151,7 +1224,10 @@ header p {
     display: none;
     align-items: center;
     justify-content: center;
-    z-index: 1000;
+    /* Must exceed .lightbox's z-index (1001) — delete/rename can now be
+       triggered from inside an active lightbox, and this modal needs to
+       paint (and be clickable) above it, not underneath. */
+    z-index: 1002;
 }
 
 .modal-overlay.active { display: flex; }
@@ -1167,6 +1243,30 @@ header p {
 
 .modal h2 { margin-bottom: 15px; }
 .modal p  { color: var(--text-muted); margin-bottom: 20px; }
+
+/* Cache Management modal's stats box (replaces hardcoded #0f0f23 -- the
+   exact generic-AI-dashboard navy the design system elsewhere eliminated --
+   plus hardcoded #888/#fff/#666 that never adapted to light theme). */
+.cache-info-box {
+    background: var(--bg-overlay);
+    padding: var(--sp-4);
+    border-radius: var(--r-md);
+    margin-bottom: var(--sp-5);
+}
+.cache-info-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: var(--sp-2);
+}
+.cache-info-row--last { margin-bottom: 0; }
+.cache-info-label { color: var(--text-muted); }
+.cache-info-value { color: var(--text); font-weight: 600; }
+/* Not --text-faint: that token is calibrated for large/decorative text
+   (e.g. sidebar section headers) and is nearly unreadable at this small
+   size against --bg-overlay in light theme (~1.7:1 contrast, worse than
+   the bug this rule fixes). --text-muted clears WCAG AA at this size in
+   both themes. */
+.cache-info-value--path { color: var(--text-muted); font-size: 0.8rem; word-break: break-all; }
 
 .modal-buttons {
     display: flex;
@@ -1188,7 +1288,18 @@ header p {
 }
 
 .lightbox.active { display: flex; }
-.lightbox img { max-width: 90%; max-height: 90%; object-fit: contain; }
+.lightbox img, .lightbox video { max-width: 90%; max-height: 90%; object-fit: contain; }
+
+/* Explicit stacking order for the lightbox's positioned children. Without
+   this, any `position:absolute` element beats a plain <img> purely by
+   being positioned, and DOM order alone decides ties — fragile once more
+   than one absolute-positioned sibling exists (e.g. the crop canvas). */
+.lightbox-close       { z-index: 3; }
+.lightbox-nav          { z-index: 3; }
+.lightbox-file-toolbar { z-index: 3; }
+.lightbox-edit-toolbar { z-index: 3; }
+.lightbox-info         { z-index: 3; }
+.lightbox-crop-canvas  { z-index: 1; }
 
 .lightbox-close {
     position: absolute;
@@ -1216,6 +1327,241 @@ header p {
 
 .lightbox-nav.prev { left: 20px; }
 .lightbox-nav.next { right: 20px; }
+
+.lightbox-crop-canvas {
+    position: absolute;
+    display: none; /* toggled to 'block' by editor.js while cropping */
+    cursor: crosshair;
+    user-select: none;
+}
+
+.lightbox-file-toolbar {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    display: flex;
+    gap: var(--sp-2);
+}
+
+.lightbox-edit-danger:hover:not(:disabled) { border-color: #ef4444; color: #ef4444; }
+
+.lightbox-info {
+    position: absolute;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: var(--text);
+    font-size: 0.85rem;
+    opacity: 0.8;
+    background: rgba(0, 0, 0, 0.5);
+    padding: var(--sp-1) var(--sp-3);
+    border-radius: var(--r-sm);
+    white-space: nowrap;
+}
+
+.lightbox-edit-toolbar {
+    display: none; /* toggled to flex by editor.js when the current file is editable */
+    position: absolute;
+    bottom: var(--sp-5);
+    left: 50%;
+    transform: translateX(-50%);
+    align-items: center;
+    gap: var(--sp-2);
+    background: rgba(0, 0, 0, 0.6);
+    padding: var(--sp-2) var(--sp-3);
+    border-radius: var(--r-md);
+}
+
+.lightbox-edit-btn {
+    background: none;
+    border: 1px solid var(--text);
+    color: var(--text);
+    border-radius: var(--r-sm);
+    padding: var(--sp-1) var(--sp-3);
+    cursor: pointer;
+    font-size: 1.2rem;
+    line-height: 1;
+}
+
+.lightbox-edit-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.lightbox-edit-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.lightbox-edit-spacer { flex: 1; }
+
+.lightbox-edit-divider {
+    width: 1px;
+    height: 20px;
+    background: var(--text);
+    opacity: 0.3;
+}
+
+.lightbox-crop-hint {
+    color: var(--text);
+    font-size: 0.85rem;
+    opacity: 0.8;
+    white-space: nowrap;
+}
+
+.lightbox-edit-save {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--bg-base);
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+.lightbox-edit-save:disabled { background: none; color: var(--text); }
+
+/* ============================================================
+   Compare Slider
+   ============================================================ */
+.compare-slider-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.96);
+    z-index: 1100;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+}
+
+.compare-slider-overlay.active { display: flex; }
+
+.compare-slider-close {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    font-size: 2rem;
+    color: var(--text);
+    cursor: pointer;
+    background: none;
+    border: none;
+    line-height: 1;
+}
+
+.compare-slider-labels {
+    display: flex;
+    justify-content: space-between;
+    width: min(90vw, 1200px);
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    padding: 0 4px;
+}
+
+.compare-slider-container {
+    position: relative;
+    width: min(90vw, 1200px);
+    height: min(70vh, 800px);
+    overflow: hidden;
+    border-radius: var(--r-md);
+    cursor: ew-resize;
+    user-select: none;
+    touch-action: none;
+}
+
+.compare-slider-img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    pointer-events: none;
+}
+
+.compare-slider-img-a-wrapper {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    width: 50%; /* updated by JS */
+}
+
+.compare-slider-img-a {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: min(90vw, 1200px); /* match container width so clip is correct */
+    height: 100%;
+    max-width: unset;
+    object-fit: contain;
+    object-position: left center;
+}
+
+.compare-slider-handle {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 44px;
+    height: 100%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: ew-resize;
+    z-index: 10;
+}
+
+.compare-slider-line {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 3px;
+    background: #fff;
+    transform: translateX(-50%);
+    box-shadow: 0 0 6px rgba(0,0,0,0.6);
+}
+
+.compare-slider-grip {
+    position: relative;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: #fff;
+    color: #111;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+    flex-shrink: 0;
+}
+
+.compare-slider-hint {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    margin: 0;
+}
+
+.compare-slider-hint kbd {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    padding: 1px 5px;
+    font-size: 0.7rem;
+}
+
+/* Trigger button on group cards */
+.compare-slider-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    font-size: 0.72rem;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.compare-slider-btn:hover {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+}
 
 /* ============================================================
    No Results
@@ -1258,7 +1604,7 @@ header p {
     -webkit-appearance: none;
     height: 6px;
     background: var(--border);
-    border-radius: 3px;
+    border-radius: var(--r-sm);
     outline: none;
 }
 
@@ -1398,6 +1744,21 @@ header p {
     flex-shrink: 0;
 }
 
+/* Marks operations that also support video files (see capabilities.py) */
+.video-badge {
+    margin-left: auto;
+    font-size: 0.8rem;
+    opacity: 0.75;
+    flex-shrink: 0;
+}
+
+/* Explains a "partial" video-support operation inline in its form */
+.video-support-note {
+    display: block;
+    margin-top: 6px;
+    color: var(--text-faint);
+}
+
 /* Main content */
 .ops-main { padding: 30px; }
 
@@ -1416,6 +1777,121 @@ header p {
     margin-top: 24px;
     padding-top: 20px;
     border-top: 1px solid var(--border);
+}
+
+/* Per-folder date range list */
+.autofill-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 0.75rem;
+}
+.autofill-row label { margin: 0; white-space: nowrap; font-weight: 500; }
+.autofill-row input[type="date"] { width: 150px; }
+
+.autofill-preview {
+    max-height: 350px;
+    overflow-y: auto;
+    margin: 1rem 0;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+}
+.autofill-preview-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border);
+}
+.autofill-preview-row:last-child { border-bottom: none; }
+.autofill-folder-name { font-weight: 500; }
+.autofill-range { color: var(--muted); font-size: 0.9rem; }
+
+.per-folder-list {
+    max-height: 400px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    padding: 4px;
+}
+
+.per-folder-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+}
+
+.per-folder-row:last-child { border-bottom: none; }
+
+.per-folder-name {
+    flex: 1;
+    min-width: 0;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.per-folder-row input[type="date"] {
+    width: 140px;
+    padding: 4px 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--input-bg);
+    color: var(--text);
+    font-size: 0.85rem;
+}
+
+.pf-sep {
+    color: var(--muted);
+    font-size: 0.8rem;
+}
+
+.scan-folder-row .pf-path-wrapper {
+    flex: 1;
+    min-width: 0;
+    position: relative;
+}
+
+.scan-folder-row .pf-path {
+    width: 100%;
+}
+
+.scan-folder-row .pf-reference-toggle {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.8rem;
+    white-space: nowrap;
+    color: var(--muted);
+    cursor: pointer;
+}
+
+.scan-folder-row .pf-reference-toggle.reference-active {
+    color: var(--warning);
+    font-weight: 600;
+}
+
+.scan-folder-row .btn-icon-remove {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 2px 6px;
+    flex-shrink: 0;
+}
+
+.scan-folder-row .btn-icon-remove:hover {
+    color: var(--danger);
+}
+
+.pf-toggle {
+    font-size: 0.8rem;
+    white-space: nowrap;
+    color: var(--muted);
 }
 
 /* Running indicator */
@@ -1613,7 +2089,7 @@ header p {
 .pipeline-step-item input { width: 16px; height: 16px; accent-color: var(--accent); }
 
 .pipeline-step-item label {
-    color: #ccc;
+    color: var(--text);
     font-size: 0.875rem;
     cursor: pointer;
 }
@@ -1716,8 +2192,12 @@ header p {
         width: 100%;
     }
 
-    /* Image cards: single column on small phones */
-    .images-grid {
+    /* Image cards: single column on small phones. Was ".images-grid", a
+       class that doesn't exist anywhere in the markup (the real grid-view
+       container is ".group-images", built in _buildGroupImagesGridHtml())
+       -- this rule was dead CSS and the single-column collapse never
+       applied on narrow viewports. */
+    .group-images {
         grid-template-columns: 1fr;
     }
 
@@ -1738,4 +2218,154 @@ header p {
     .no-results {
         padding: 30px 12px;
     }
+}
+
+
+/* =============================================================
+   New utility styles
+   ============================================================= */
+
+/* Toast notifications */
+.toast-container {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 9999;
+    pointer-events: none;
+}
+.toast {
+    background: var(--surface-2);
+    color: var(--text);
+    border-radius: var(--r-md);
+    padding: 12px 18px;
+    font-size: 0.875rem;
+    box-shadow: 0 4px 16px rgba(0,0,0,.4);
+    opacity: 0;
+    transform: translateY(12px);
+    transition: opacity .25s, transform .25s;
+    pointer-events: auto;
+    max-width: 340px;
+}
+.toast.show {
+    opacity: 1;
+    transform: translateY(0);
+}
+.toast.toast-error {
+    border-left: 3px solid var(--danger);
+    background: rgba(239,68,68,0.12);
+}
+.toast.toast-success {
+    border-left: 3px solid var(--success, #22c55e);
+}
+.toast.toast-info {
+    border-left: 3px solid var(--accent);
+}
+
+/* Image error badge */
+.img-error-badge {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 120px;
+    background: var(--surface-2);
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    text-align: center;
+    border-radius: var(--r-sm);
+    flex-direction: column;
+    gap: 4px;
+}
+.img-error-badge::before {
+    content: "A0";
+    font-size: 1.5rem;
+    opacity: 0.5;
+}
+
+/* Cache manage button (replaces inline style). Background is a fixed dark
+   shade regardless of theme, so -- like .btn-primary/.btn-danger etc, which
+   each pair a fixed background with an explicit matching color -- text
+   color must be explicit too, not inherited from var(--text) (which is
+   near-black in light theme, giving ~1.7:1 contrast against this button's
+   unchanging dark background). */
+.cache-manage-btn {
+    margin-left: 10px;
+    padding: 4px 12px;
+    background: #333;
+    color: #fff;
+}
+.cache-manage-btn:hover {
+    background: #444;
+}
+
+/* Drop zone for directory input */
+.drop-zone {
+    position: relative;
+}
+.drop-zone.drag-over input {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-glow);
+}
+.drop-overlay {
+    display: none;
+    position: absolute;
+    inset: 0;
+    background: var(--accent-dim);
+    border: 2px dashed var(--accent);
+    border-radius: var(--r-md);
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 1rem;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    pointer-events: none;
+}
+.drop-zone.drag-over .drop-overlay {
+    display: flex;
+}
+
+/* Export dropdown */
+.export-dropdown {
+    position: relative;
+    display: inline-block;
+}
+.export-menu {
+    display: none;
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    margin-bottom: 4px;
+    background: var(--bg-overlay);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    overflow: hidden;
+    z-index: 50;
+    min-width: 140px;
+}
+.export-menu.open { display: block; }
+.export-menu button {
+    display: block;
+    width: 100%;
+    padding: 8px 14px;
+    background: none;
+    border: none;
+    color: var(--text);
+    font-size: 0.85rem;
+    text-align: left;
+    cursor: pointer;
+}
+.export-menu button:hover {
+    background: var(--accent-dim);
+    color: var(--accent);
+}
+
+/* Group card title savings span */
+.group-savings-label {
+    color: var(--text-muted);
+    font-weight: normal;
+    margin-left: 10px;
 }

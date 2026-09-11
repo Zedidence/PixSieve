@@ -14,7 +14,31 @@ from pathlib import Path
 from ..config import MODE_BIT_DEPTHS
 from ..models import ImageInfo
 from .dependencies import Image, imagehash, HAS_HEIF_SUPPORT, _logger
-from .hashing import calculate_file_hash, calculate_quality_score, _ensure_phash_mode
+from .hashing import calculate_file_hash, calculate_quality_score, calculate_sharpness_score, _ensure_phash_mode
+
+
+def _extract_capture_date(img) -> float | None:
+    """
+    Read EXIF DateTimeOriginal (tag 0x9003, in the Exif sub-IFD 0x8769) from
+    an already-open PIL Image and return it as a Unix timestamp.
+
+    Returns None if there's no EXIF, no DateTimeOriginal tag, or the value
+    doesn't parse as the standard "YYYY:MM:DD HH:MM:SS" EXIF date format -
+    callers should treat None as "fall back to filesystem mtime", never as
+    an error.
+    """
+    try:
+        exif = img.getexif()
+        if not exif:
+            return None
+        exif_ifd = exif.get_ifd(0x8769)
+        raw = exif_ifd.get(0x9003) or exif.get(0x9003)
+        if not raw:
+            return None
+        from datetime import datetime
+        return datetime.strptime(raw, "%Y:%m:%d %H:%M:%S").timestamp()
+    except Exception:
+        return None
 
 
 def analyze_image(
@@ -90,6 +114,7 @@ def analyze_image(
                     info.pixel_count = img.width * img.height
                     info.format = img.format or ""
                     info.bit_depth = MODE_BIT_DEPTHS.get(img.mode, 24)
+                    info.capture_date = _extract_capture_date(img)
 
                     if calculate_phash:
                         try:
@@ -101,6 +126,9 @@ def analyze_image(
                             phash_img.thumbnail((256, 256), Image.Resampling.LANCZOS)
                             phash = imagehash.phash(phash_img, hash_size=16)
                             info.perceptual_hash = str(phash)
+                            # Reuses the same thumbnail already produced above -
+                            # no second decode.
+                            info.sharpness_score = calculate_sharpness_score(phash_img)
                         except OSError as phash_err:
                             # OSError from thumbnail/load signals truncated pixel data.
                             info.error = f"Corrupt or truncated image: {phash_err}"

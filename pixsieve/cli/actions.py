@@ -16,6 +16,7 @@ from typing import Optional
 from ..models import DuplicateGroup
 from ..utils.validators import validate_file_accessible
 from ..utils.platform import check_hardlink_support, check_symlink_support
+from ..utils.selection import resolve_group_selections, group_keep_and_delete
 
 
 def _generate_unique_filename(dest: Path, base_path: Path) -> Path:
@@ -161,10 +162,17 @@ def handle_duplicates(
     action: str,
     trash_dir: Optional[Path] = None,
     dry_run: bool = True,
-    logger: Optional[logging.Logger] = None
+    logger: Optional[logging.Logger] = None,
+    strategy: str = 'quality',
 ) -> dict:
     """
     Handle duplicate files based on action.
+
+    Which files are kept vs. deleted is decided by resolve_group_selections(),
+    the same reference-aware selection logic used by the web API: images in
+    the reference folder (if any images in a group belong to it) are always
+    kept and never touched by any action; otherwise the given strategy picks
+    the single file to keep.
 
     Args:
         groups: List of DuplicateGroup objects
@@ -172,6 +180,8 @@ def handle_duplicates(
         trash_dir: Directory to move duplicates to (for 'move' action)
         dry_run: If True, only simulate actions
         logger: Optional logger instance
+        strategy: Selection strategy for groups with no reference image.
+            One of 'quality', 'largest', 'smallest', 'newest', 'oldest'.
 
     Returns:
         Statistics dictionary with keys:
@@ -205,10 +215,14 @@ def handle_duplicates(
                     logger.info("Tip: On Windows, run as Administrator or enable Developer Mode")
                 return stats
 
-    for group in groups:
-        best = group.best_image
+    selections = resolve_group_selections(groups, strategy)
 
-        for dupe in group.duplicates:
+    for group in groups:
+        best, dupes = group_keep_and_delete(group, selections)
+        if best is None:
+            continue
+
+        for dupe in dupes:
             try:
                 # Validate file accessibility before operations
                 if not dry_run:

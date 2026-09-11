@@ -19,6 +19,7 @@ from typing import Any
 
 from flask import Blueprint, jsonify, request, Response
 
+from ..config import IMAGE_EXTENSIONS, RATING_EXTENSIONS, resolve_extensions
 from ..operations import (
     delete_empty_folders,
     move_to_parent,
@@ -27,8 +28,8 @@ from ..operations import (
     rename_by_parent,
     fix_extensions,
     batch_convert_to_jpg,
-    randomize_exif_dates,
-    randomize_file_dates,
+    randomize_dates,
+    randomize_dates_per_folder,
     sort_alphabetical,
     sort_by_resolution,
     ColorImageSorter,
@@ -36,6 +37,25 @@ from ..operations import (
     AVAILABLE_STEPS,
     scan_and_repair,
     RepairStatus,
+    strip_favorite_ratings,
+    supports_video,
+)
+from ..utils.platform import check_exiftool_available
+from ..utils.validators import validate_directory as _shared_validate_directory
+from .schemas import (
+    parse_request,
+    DirectoryRequest,
+    MoveRequest,
+    MoveToParentRequest,
+    RenameRandomRequest,
+    ConvertRequest,
+    DateRangeRequest,
+    RandomizeDatesPerFolderRequest,
+    RecursiveVideoRequest,
+    SortColorRequest,
+    SortResolutionRequest,
+    PipelineRequest,
+    RepairRequest,
 )
 
 # Blueprint for operations routes
@@ -64,14 +84,17 @@ def _update_progress(pct: int | None, text: str = '') -> None:
 
 
 def _validate_directory(directory: str) -> tuple[bool, str | None]:
-    """Validate a directory path from request data."""
-    if not directory:
-        return False, 'Directory path is required'
-    if not os.path.isabs(directory):
-        return False, 'Directory must be an absolute path'
-    if not os.path.isdir(directory):
-        return False, f'Directory not found: {directory}'
-    return True, None
+    """
+    Validate a directory path from request data.
+
+    Delegates to the shared utils.validators.validate_directory() (also used
+    by api/routes.py and api/schemas.py) instead of a separately-maintained,
+    weaker copy -- the shared version additionally checks read permission
+    (os.access(..., os.R_OK)), which this file's own copy used to omit, so an
+    unreadable directory previously slipped past this check and only failed
+    later as an unhandled exception inside the operation itself.
+    """
+    return _shared_validate_directory(directory)
 
 
 def _parse_date(date_str: str) -> datetime | None:
@@ -83,23 +106,63 @@ def _parse_date(date_str: str) -> datetime | None:
 
 
 def _parse_extensions(ext_list: list[str] | None) -> set[str] | None:
-    """Normalize extension list to set with leading dots."""
+    """
+    Normalize extension list to set with leading dots.
+
+    Treats anything other than a real list (e.g. a bare string like ".jpg"
+    sent instead of [".jpg"]) as "no extensions provided" rather than
+    iterating it -- a bare string would otherwise iterate character-by-
+    character, silently producing a nonsensical extension set instead of
+    the caller's intended override.
+    """
     if not ext_list:
+        return None
+    if not isinstance(ext_list, list):
+        _logger.warning(f"Ignoring non-list 'extensions' value: {ext_list!r}")
         return None
     return {ext if ext.startswith('.') else f'.{ext}' for ext in ext_list}
 
 
-def _run_operation(name: str, func, *args, **kwargs):
-    """Run an operation in a background thread and update state."""
-    def _worker():
-        with _operation_lock:
-            _operation_state['status'] = 'running'
-            _operation_state['operation'] = name
-            _operation_state['result'] = None
-            _operation_state['error'] = None
-            _operation_state['progress'] = None
-            _operation_state['progress_text'] = ''
+def _check_include_videos(include_videos: bool, op_name: str) -> tuple[bool, tuple | None]:
+    """
+    Validate an already-parsed includeVideos flag against `op_name`'s
+    video-support capability.
 
+    Rejects the request with a 400 (rather than silently ignoring the flag)
+    if the operation doesn't support video files at all, per the capability
+    registry in pixsieve/operations/capabilities.py.
+
+    Returns:
+        (include_videos, None) on success, or
+        (False, (response, 400)) - return this tuple directly from the
+        route to short-circuit it.
+    """
+    include_videos = bool(include_videos)
+    if include_videos and not supports_video(op_name):
+        return False, (jsonify({'error': f"'{op_name}' does not support video files"}), 400)
+    return include_videos, None
+
+
+def _run_operation(name: str, func, *args, **kwargs) -> bool:
+    """
+    Run an operation in a background thread and update state.
+
+    Returns False without starting anything if another operation is already
+    running (mirroring the 409-on-concurrent-start behavior /api/scan and
+    /api/delete already have) instead of silently racing the shared
+    _operation_state dict between two overlapping background threads.
+    """
+    with _operation_lock:
+        if _operation_state['status'] == 'running':
+            return False
+        _operation_state['status'] = 'running'
+        _operation_state['operation'] = name
+        _operation_state['result'] = None
+        _operation_state['error'] = None
+        _operation_state['progress'] = None
+        _operation_state['progress_text'] = ''
+
+    def _worker():
         try:
             result = func(*args, **kwargs)
             with _operation_lock:
@@ -114,6 +177,12 @@ def _run_operation(name: str, func, *args, **kwargs):
 
     thread = threading.Thread(target=_worker, daemon=True)
     thread.start()
+    return True
+
+
+def _busy_response():
+    """Standard 409 response for '_run_operation refused, one is already running'."""
+    return jsonify({'error': 'Another operation is already running. Wait for it to finish.'}), 409
 
 
 def _make_serializable(obj: Any) -> Any:
@@ -200,52 +269,55 @@ def operations_available():
 @operations_bp.route('/api/operations/move-to-parent', methods=['POST'])
 def api_move_to_parent():
     """Move all images from subdirectories into the parent folder."""
-    data = request.json or {}
-    directory = data.get('directory', '').strip()
+    body, err = parse_request(MoveToParentRequest, request.json)
+    if err:
+        return err
 
-    valid, error = _validate_directory(directory)
+    valid, error = _validate_directory(body.directory)
     if not valid:
         return jsonify({'error': error}), 400
 
-    dry_run = data.get('dryRun', True)
-    extensions = _parse_extensions(data.get('extensions'))
+    include_videos, err = _check_include_videos(body.includeVideos, 'move-to-parent')
+    if err:
+        return err
 
-    _run_operation(
+    extensions = resolve_extensions(
+        IMAGE_EXTENSIONS, include_videos, extra=_parse_extensions(body.extensions),
+    )
+
+    if not _run_operation(
         'move-to-parent',
         move_to_parent,
-        directory,
+        body.directory,
         extensions=extensions,
-        dry_run=dry_run,
-    )
+        dry_run=body.dryRun,
+    ):
+        return _busy_response()
     return jsonify({'status': 'started', 'operation': 'move-to-parent'})
 
 
 @operations_bp.route('/api/operations/move', methods=['POST'])
 def api_move():
     """Move files preserving directory structure."""
-    data = request.json or {}
-    source = data.get('directory', '').strip()
-    destination = data.get('destination', '').strip()
+    body, err = parse_request(MoveRequest, request.json)
+    if err:
+        return err
 
-    valid, error = _validate_directory(source)
+    valid, error = _validate_directory(body.directory)
     if not valid:
         return jsonify({'error': error}), 400
-    if not destination:
-        return jsonify({'error': 'Destination path is required'}), 400
-    if not os.path.isabs(destination):
+    if not os.path.isabs(body.destination):
         return jsonify({'error': 'Destination must be an absolute path'}), 400
 
-    dry_run = data.get('dryRun', True)
-    overwrite = data.get('overwrite', False)
-
-    _run_operation(
+    if not _run_operation(
         'move',
         move_with_structure,
-        source,
-        destination,
-        overwrite=overwrite,
-        dry_run=dry_run,
-    )
+        body.directory,
+        body.destination,
+        overwrite=body.overwrite,
+        dry_run=body.dryRun,
+    ):
+        return _busy_response()
     return jsonify({'status': 'started', 'operation': 'move'})
 
 
@@ -256,50 +328,54 @@ def api_move():
 @operations_bp.route('/api/operations/rename/random', methods=['POST'])
 def api_rename_random():
     """Rename files to random alphanumeric names."""
-    data = request.json or {}
-    directory = data.get('directory', '').strip()
+    body, err = parse_request(RenameRandomRequest, request.json)
+    if err:
+        return err
 
-    valid, error = _validate_directory(directory)
+    valid, error = _validate_directory(body.directory)
     if not valid:
         return jsonify({'error': error}), 400
 
-    dry_run = data.get('dryRun', True)
-    name_length = data.get('nameLength', 12)
-    extensions = _parse_extensions(data.get('extensions'))
-    recursive = data.get('recursive', True)
-    workers = max(1, min(data.get('workers', 4), 16))
+    include_videos, err = _check_include_videos(body.includeVideos, 'rename-random')
+    if err:
+        return err
 
-    _run_operation(
+    extensions = resolve_extensions(
+        IMAGE_EXTENSIONS, include_videos, extra=_parse_extensions(body.extensions),
+    )
+
+    if not _run_operation(
         'rename-random',
         rename_random,
-        directory,
-        name_length=name_length,
+        body.directory,
+        name_length=body.nameLength,
         extensions=extensions,
-        recursive=recursive,
-        dry_run=dry_run,
-        workers=workers,
-    )
+        recursive=body.recursive,
+        dry_run=body.dryRun,
+        workers=body.workers,
+    ):
+        return _busy_response()
     return jsonify({'status': 'started', 'operation': 'rename-random'})
 
 
 @operations_bp.route('/api/operations/rename/parent', methods=['POST'])
 def api_rename_parent():
     """Rename files based on parent folder names."""
-    data = request.json or {}
-    directory = data.get('directory', '').strip()
+    body, err = parse_request(DirectoryRequest, request.json)
+    if err:
+        return err
 
-    valid, error = _validate_directory(directory)
+    valid, error = _validate_directory(body.directory)
     if not valid:
         return jsonify({'error': error}), 400
 
-    dry_run = data.get('dryRun', True)
-
-    _run_operation(
+    if not _run_operation(
         'rename-parent',
         rename_by_parent,
-        directory,
-        dry_run=dry_run,
-    )
+        body.directory,
+        dry_run=body.dryRun,
+    ):
+        return _busy_response()
     return jsonify({'status': 'started', 'operation': 'rename-parent'})
 
 
@@ -310,96 +386,101 @@ def api_rename_parent():
 @operations_bp.route('/api/operations/sort/alpha', methods=['POST'])
 def api_sort_alpha():
     """Sort files into alphabetical group folders."""
-    data = request.json or {}
-    directory = data.get('directory', '').strip()
+    body, err = parse_request(DirectoryRequest, request.json)
+    if err:
+        return err
 
-    valid, error = _validate_directory(directory)
+    valid, error = _validate_directory(body.directory)
     if not valid:
         return jsonify({'error': error}), 400
 
-    dry_run = data.get('dryRun', True)
-
-    _run_operation(
+    if not _run_operation(
         'sort-alpha',
         sort_alphabetical,
-        directory,
-        dry_run=dry_run,
-    )
+        body.directory,
+        dry_run=body.dryRun,
+    ):
+        return _busy_response()
     return jsonify({'status': 'started', 'operation': 'sort-alpha'})
 
 
 @operations_bp.route('/api/operations/sort/color', methods=['POST'])
 def api_sort_color():
     """Sort images by color using K-means clustering."""
-    data = request.json or {}
-    directory = data.get('directory', '').strip()
+    body, err = parse_request(SortColorRequest, request.json)
+    if err:
+        return err
 
-    valid, error = _validate_directory(directory)
+    valid, error = _validate_directory(body.directory)
     if not valid:
         return jsonify({'error': error}), 400
 
-    dry_run = data.get('dryRun', True)
-    method = data.get('method', 'dominant')
-    copy_files = data.get('copyFiles', False)
-    n_colors = data.get('nColors', 3)
+    include_videos, err = _check_include_videos(body.includeVideos, 'sort-color')
+    if err:
+        return err
 
-    sorter = ColorImageSorter(directory)
+    sorter = ColorImageSorter(body.directory, include_videos=include_videos)
+    method = body.method
 
     if method == 'dominant':
-        _run_operation(
+        started = _run_operation(
             'sort-color-dominant',
             sorter.sort_by_dominant_color,
-            copy_files=copy_files,
-            dry_run=dry_run,
+            copy_files=body.copyFiles,
+            dry_run=body.dryRun,
         )
     elif method == 'bw':
-        _run_operation(
+        started = _run_operation(
             'sort-color-bw',
             sorter.sort_by_color_bw,
-            copy_files=copy_files,
-            dry_run=dry_run,
+            copy_files=body.copyFiles,
+            dry_run=body.dryRun,
         )
     elif method == 'palette':
-        _run_operation(
+        started = _run_operation(
             'sort-color-palette',
             sorter.sort_by_palette,
-            copy_files=copy_files,
-            n_colors=n_colors,
-            dry_run=dry_run,
+            copy_files=body.copyFiles,
+            n_colors=body.nColors,
+            dry_run=body.dryRun,
         )
-    elif method == 'analyze':
-        _run_operation(
+    else:
+        started = _run_operation(
             'sort-color-analyze',
             sorter.analyze_colors,
         )
-    else:
-        return jsonify({'error': f'Unknown color sort method: {method}'}), 400
 
+    if not started:
+        return _busy_response()
     return jsonify({'status': 'started', 'operation': f'sort-color-{method}'})
 
 
 @operations_bp.route('/api/operations/sort/resolution', methods=['POST'])
 def api_sort_resolution():
     """Sort images by resolution category and orientation into sub-folders."""
-    data = request.json or {}
-    directory = data.get('directory', '').strip()
+    body, err = parse_request(SortResolutionRequest, request.json)
+    if err:
+        return err
 
-    valid, error = _validate_directory(directory)
+    valid, error = _validate_directory(body.directory)
     if not valid:
         return jsonify({'error': error}), 400
 
-    dry_run = data.get('dryRun', True)
-    copy_files = data.get('copyFiles', False)
+    include_videos, err = _check_include_videos(body.includeVideos, 'sort-resolution')
+    if err:
+        return err
 
     def _with_progress():
         return sort_by_resolution(
-            directory,
-            copy_files=copy_files,
-            dry_run=dry_run,
+            body.directory,
+            copy_files=body.copyFiles,
+            dry_run=body.dryRun,
             on_progress=_update_progress,
+            include_videos=include_videos,
         )
 
-    _run_operation('sort-resolution', _with_progress)
+    if not _run_operation('sort-resolution', _with_progress):
+        return _busy_response()
     return jsonify({'status': 'started', 'operation': 'sort-resolution'})
 
 
@@ -410,50 +491,54 @@ def api_sort_resolution():
 @operations_bp.route('/api/operations/fix-extensions', methods=['POST'])
 def api_fix_extensions():
     """Fix file extensions that don't match actual image format."""
-    data = request.json or {}
-    directory = data.get('directory', '').strip()
+    body, err = parse_request(RecursiveVideoRequest, request.json)
+    if err:
+        return err
 
-    valid, error = _validate_directory(directory)
+    valid, error = _validate_directory(body.directory)
     if not valid:
         return jsonify({'error': error}), 400
 
-    dry_run = data.get('dryRun', True)
-    recursive = data.get('recursive', True)
+    _, err = _check_include_videos(body.includeVideos, 'fix-extensions')
+    if err:
+        return err
 
-    _run_operation(
+    if not _run_operation(
         'fix-extensions',
         fix_extensions,
-        directory,
-        recursive=recursive,
-        dry_run=dry_run,
-    )
+        body.directory,
+        recursive=body.recursive,
+        dry_run=body.dryRun,
+    ):
+        return _busy_response()
     return jsonify({'status': 'started', 'operation': 'fix-extensions'})
 
 
 @operations_bp.route('/api/operations/convert', methods=['POST'])
 def api_convert():
     """Convert PNG/BMP/WEBP images to JPG."""
-    data = request.json or {}
-    directory = data.get('directory', '').strip()
+    body, err = parse_request(ConvertRequest, request.json)
+    if err:
+        return err
 
-    valid, error = _validate_directory(directory)
+    valid, error = _validate_directory(body.directory)
     if not valid:
         return jsonify({'error': error}), 400
 
-    dry_run = data.get('dryRun', True)
-    quality = max(1, min(data.get('quality', 95), 100))
-    delete_originals = data.get('deleteOriginals', False)
-    recursive = data.get('recursive', True)
+    _, err = _check_include_videos(body.includeVideos, 'convert')
+    if err:
+        return err
 
-    _run_operation(
+    if not _run_operation(
         'convert',
         batch_convert_to_jpg,
-        directory,
-        quality=quality,
-        delete_originals=delete_originals,
-        recursive=recursive,
-        dry_run=dry_run,
-    )
+        body.directory,
+        quality=body.quality,
+        delete_originals=body.deleteOriginals,
+        recursive=body.recursive,
+        dry_run=body.dryRun,
+    ):
+        return _busy_response()
     return jsonify({'status': 'started', 'operation': 'convert'})
 
 
@@ -461,74 +546,124 @@ def api_convert():
 # Metadata operations
 # =============================================================================
 
-@operations_bp.route('/api/operations/metadata/randomize-exif', methods=['POST'])
-def api_randomize_exif():
-    """Randomize EXIF date metadata."""
-    data = request.json or {}
-    directory = data.get('directory', '').strip()
-
-    valid, error = _validate_directory(directory)
-    if not valid:
-        return jsonify({'error': error}), 400
-
-    start_date = _parse_date(data.get('startDate', ''))
-    end_date = _parse_date(data.get('endDate', ''))
-
-    if not start_date:
-        return jsonify({'error': 'Valid start date required (YYYY-MM-DD)'}), 400
-    if not end_date:
-        return jsonify({'error': 'Valid end date required (YYYY-MM-DD)'}), 400
-    if start_date >= end_date:
-        return jsonify({'error': 'Start date must be before end date'}), 400
-
-    dry_run = data.get('dryRun', True)
-    recursive = data.get('recursive', True)
-
-    _run_operation(
-        'randomize-exif',
-        randomize_exif_dates,
-        directory,
-        start_date=start_date,
-        end_date=end_date,
-        recursive=recursive,
-        dry_run=dry_run,
-    )
-    return jsonify({'status': 'started', 'operation': 'randomize-exif'})
-
-
 @operations_bp.route('/api/operations/metadata/randomize-dates', methods=['POST'])
 def api_randomize_dates():
-    """Randomize file system timestamps."""
-    data = request.json or {}
-    directory = data.get('directory', '').strip()
+    """Randomize image dates: EXIF metadata (JPG/TIFF) and filesystem timestamps."""
+    body, err = parse_request(DateRangeRequest, request.json)
+    if err:
+        return err
 
-    valid, error = _validate_directory(directory)
+    valid, error = _validate_directory(body.directory)
     if not valid:
         return jsonify({'error': error}), 400
 
-    start_date = _parse_date(data.get('startDate', ''))
-    end_date = _parse_date(data.get('endDate', ''))
-
+    # The schema already checked shape (10 chars) and lexicographic
+    # ordering; _parse_date() still does the real calendar-validity parse
+    # (e.g. "9999-99-99" is 10 chars and would sort fine, but isn't a date).
+    start_date = _parse_date(body.startDate)
+    end_date = _parse_date(body.endDate)
     if not start_date:
         return jsonify({'error': 'Valid start date required (YYYY-MM-DD)'}), 400
     if not end_date:
         return jsonify({'error': 'Valid end date required (YYYY-MM-DD)'}), 400
-    if start_date >= end_date:
-        return jsonify({'error': 'Start date must be before end date'}), 400
 
-    dry_run = data.get('dryRun', True)
-    recursive = data.get('recursive', True)
+    include_videos, err = _check_include_videos(body.includeVideos, 'randomize-dates')
+    if err:
+        return err
 
-    _run_operation(
+    if not _run_operation(
         'randomize-dates',
-        randomize_file_dates,
-        directory,
+        randomize_dates,
+        body.directory,
         start_date=start_date,
         end_date=end_date,
-        recursive=recursive,
-        dry_run=dry_run,
-    )
+        recursive=body.recursive,
+        dry_run=body.dryRun,
+        sync_exif=body.syncExif,
+        extensions=resolve_extensions(IMAGE_EXTENSIONS, include_videos),
+    ):
+        return _busy_response()
     return jsonify({'status': 'started', 'operation': 'randomize-dates'})
+
+
+@operations_bp.route('/api/operations/metadata/randomize-dates-per-folder', methods=['POST'])
+def api_randomize_dates_per_folder():
+    """Randomize image dates with a per-folder date range."""
+    body, err = parse_request(RandomizeDatesPerFolderRequest, request.json)
+    if err:
+        return err
+
+    folder_ranges = []
+    for entry in body.folderRanges:
+        folder = entry.folder.strip()
+        label = entry.name or folder
+        valid, error = _validate_directory(folder)
+        if not valid:
+            return jsonify({'error': f'{label}: {error}'}), 400
+
+        # The schema already checked shape (10 chars); _parse_date() still
+        # does the real calendar-validity parse and the ordering check
+        # (unlike DateRangeRequest, FolderDateRange has no start<end model
+        # validator, since garbage strings must be parsed per-entry first
+        # to even compare them meaningfully).
+        start_date = _parse_date(entry.startDate)
+        end_date = _parse_date(entry.endDate)
+        if not start_date or not end_date:
+            return jsonify({'error': f'{label}: Valid dates required'}), 400
+        if start_date >= end_date:
+            return jsonify({'error': f'{label}: Start date must be before end date'}), 400
+
+        folder_ranges.append({
+            'folder': folder,
+            'startDate': start_date,
+            'endDate': end_date,
+        })
+
+    include_videos, err = _check_include_videos(body.includeVideos, 'randomize-dates')
+    if err:
+        return err
+
+    if not _run_operation(
+        'randomize-dates',
+        randomize_dates_per_folder,
+        folder_ranges,
+        dry_run=body.dryRun,
+        sync_exif=body.syncExif,
+        extensions=resolve_extensions(IMAGE_EXTENSIONS, include_videos),
+    ):
+        return _busy_response()
+    return jsonify({'status': 'started', 'operation': 'randomize-dates'})
+
+
+@operations_bp.route('/api/operations/metadata/strip-ratings', methods=['POST'])
+def api_strip_ratings():
+    """Remove 5-star/favorite rating tags from images via exiftool."""
+    body, err = parse_request(RecursiveVideoRequest, request.json)
+    if err:
+        return err
+
+    valid, error = _validate_directory(body.directory)
+    if not valid:
+        return jsonify({'error': error}), 400
+
+    available, reason = check_exiftool_available()
+    if not available:
+        return jsonify({'error': f'exiftool not available: {reason}'}), 400
+
+    include_videos, err = _check_include_videos(body.includeVideos, 'strip-ratings')
+    if err:
+        return err
+
+    if not _run_operation(
+        'strip-ratings',
+        strip_favorite_ratings,
+        body.directory,
+        recursive=body.recursive,
+        dry_run=body.dryRun,
+        extensions=resolve_extensions(RATING_EXTENSIONS, include_videos),
+    ):
+        return _busy_response()
+    return jsonify({'status': 'started', 'operation': 'strip-ratings'})
 
 
 # =============================================================================
@@ -538,21 +673,21 @@ def api_randomize_dates():
 @operations_bp.route('/api/operations/cleanup', methods=['POST'])
 def api_cleanup():
     """Delete empty folders recursively."""
-    data = request.json or {}
-    directory = data.get('directory', '').strip()
+    body, err = parse_request(DirectoryRequest, request.json)
+    if err:
+        return err
 
-    valid, error = _validate_directory(directory)
+    valid, error = _validate_directory(body.directory)
     if not valid:
         return jsonify({'error': error}), 400
 
-    dry_run = data.get('dryRun', True)
-
-    _run_operation(
+    if not _run_operation(
         'cleanup',
         delete_empty_folders,
-        directory,
-        dry_run=dry_run,
-    )
+        body.directory,
+        dry_run=body.dryRun,
+    ):
+        return _busy_response()
     return jsonify({'status': 'started', 'operation': 'cleanup'})
 
 
@@ -563,33 +698,38 @@ def api_cleanup():
 @operations_bp.route('/api/operations/pipeline', methods=['POST'])
 def api_pipeline():
     """Run a multi-step operation pipeline."""
-    data = request.json or {}
-    directory = data.get('directory', '').strip()
+    body, err = parse_request(PipelineRequest, request.json)
+    if err:
+        return err
 
-    valid, error = _validate_directory(directory)
+    valid, error = _validate_directory(body.directory)
     if not valid:
         return jsonify({'error': error}), 400
 
-    steps = data.get('steps', [])
-    if not steps or not isinstance(steps, list):
-        return jsonify({'error': 'Steps list is required'}), 400
+    steps = body.steps
 
-    # Validate step names
+    # Step names are dynamic business data (the pipeline registry), not
+    # schema-expressible without coupling schemas.py to operations.pipeline.
     invalid = [s for s in steps if s not in AVAILABLE_STEPS]
     if invalid:
         return jsonify({
             'error': f'Unknown steps: {invalid}. Available: {list(AVAILABLE_STEPS.keys())}'
         }), 400
 
-    dry_run = data.get('dryRun', True)
+    include_videos, err = _check_include_videos(body.includeVideos, 'pipeline')
+    if err:
+        return err
 
-    # Parse dates if needed
-    date_steps = {'randomize_exif', 'randomize_dates'}
+    # Dates are only required for certain steps, so this stays a post-schema
+    # conditional check rather than a plain required schema field; the
+    # schema already checked shape (10 chars) when startDate/endDate are
+    # given, but _parse_date() still does the real calendar-validity parse.
+    date_steps = {'randomize_dates'}
     start_date = None
     end_date = None
     if date_steps & set(steps):
-        start_date = _parse_date(data.get('startDate', ''))
-        end_date = _parse_date(data.get('endDate', ''))
+        start_date = _parse_date(body.startDate or '')
+        end_date = _parse_date(body.endDate or '')
         if not start_date or not end_date:
             return jsonify({
                 'error': 'Start and end dates required for date-related steps (YYYY-MM-DD)'
@@ -598,25 +738,27 @@ def api_pipeline():
             return jsonify({'error': 'Start date must be before end date'}), 400
 
     # trash_dir is required when repair_corrupt step is included
-    trash_dir = data.get('trashDir', '').strip() or None
+    trash_dir = (body.trashDir or '').strip() or None
     if 'repair_corrupt' in steps and not trash_dir:
         from ..config import DEFAULT_TRASH_DIR
         trash_dir = DEFAULT_TRASH_DIR
 
-    _run_operation(
+    if not _run_operation(
         'pipeline',
         run_pipeline,
-        directory,
+        body.directory,
         steps=steps,
         start_date=start_date,
         end_date=end_date,
-        name_length=data.get('nameLength', 12),
-        jpg_quality=max(1, min(data.get('jpgQuality', 95), 100)),
-        delete_originals=data.get('deleteOriginals', False),
-        recursive=data.get('recursive', True),
-        dry_run=dry_run,
+        name_length=body.nameLength,
+        jpg_quality=body.jpgQuality,
+        delete_originals=body.deleteOriginals,
+        recursive=body.recursive,
+        dry_run=body.dryRun,
         trash_dir=trash_dir,
-    )
+        include_videos=include_videos,
+    ):
+        return _busy_response()
     return jsonify({'status': 'started', 'operation': 'pipeline'})
 
 
@@ -627,32 +769,29 @@ def api_pipeline():
 @operations_bp.route('/api/operations/repair', methods=['POST'])
 def api_repair():
     """Scan for corrupt images, attempt repair, quarantine unfixable files."""
-    data = request.json or {}
-    directory = data.get('directory', '').strip()
+    body, err = parse_request(RepairRequest, request.json)
+    if err:
+        return err
 
-    valid, error = _validate_directory(directory)
+    valid, error = _validate_directory(body.directory)
     if not valid:
         return jsonify({'error': error}), 400
 
-    trash_folder = data.get('trashFolder', '').strip()
-    if not trash_folder:
-        return jsonify({'error': 'Trash folder path is required'}), 400
-    if not os.path.isabs(trash_folder):
-        return jsonify({'error': 'Trash folder must be an absolute path'}), 400
+    _, err = _check_include_videos(body.includeVideos, 'repair')
+    if err:
+        return err
 
-    dry_run = data.get('dryRun', True)
-    attempt_repair = data.get('attemptRepair', True)
-    quarantine_unfixable = data.get('quarantineUnfixable', True)
-    workers = max(1, min(data.get('workers', 4), 16))
+    if not os.path.isabs(body.trashFolder):
+        return jsonify({'error': 'Trash folder must be an absolute path'}), 400
 
     def _repair_and_serialize():
         result = scan_and_repair(
-            directory,
-            trash_folder=trash_folder,
-            attempt_repair=attempt_repair,
-            quarantine_unfixable=quarantine_unfixable,
-            dry_run=dry_run,
-            max_workers=workers,
+            body.directory,
+            trash_folder=body.trashFolder,
+            attempt_repair=body.attemptRepair,
+            quarantine_unfixable=body.quarantineUnfixable,
+            dry_run=body.dryRun,
+            max_workers=body.workers,
         )
         # Serialize RepairResult objects and separate problem files from stats
         problems = [
@@ -671,5 +810,6 @@ def api_repair():
             'problems': problems,
         }
 
-    _run_operation('repair', _repair_and_serialize)
+    if not _run_operation('repair', _repair_and_serialize):
+        return _busy_response()
     return jsonify({'status': 'started', 'operation': 'repair'})

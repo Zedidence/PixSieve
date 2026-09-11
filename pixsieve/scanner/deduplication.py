@@ -13,10 +13,12 @@ import time
 from collections import defaultdict
 from typing import Optional, Callable, Any
 
-from ..config import LSH_AUTO_THRESHOLD
+from ..config import LSH_AUTO_THRESHOLD, LSH_DEDUPE_SEEN_SET_MAX
 from ..lsh import HammingLSH, calculate_optimal_params, estimate_comparison_reduction
 from ..models import ImageInfo, DuplicateGroup
 from .dependencies import imagehash, HAS_TQDM, _tqdm_class
+
+_logger = logging.getLogger(__name__)
 
 
 # B2: Thread-safe dict cache for parsed perceptual hashes — avoids re-parsing
@@ -187,7 +189,7 @@ def _find_perceptual_duplicates_bruteforce(
     """
     Brute-force O(n^2) perceptual duplicate finding.
 
-    Best for small collections (< 5000 images).
+    Best for small collections (below config.LSH_AUTO_THRESHOLD images).
     """
     # B2: Use thread-safe cached hash parser
     parsed_hashes = []
@@ -195,7 +197,7 @@ def _find_perceptual_duplicates_bruteforce(
         try:
             parsed_hashes.append(_parse_phash(img.perceptual_hash))
         except Exception as e:
-            logger.debug(f"Failed to parse hash for {img.path}: {e}")
+            _logger.debug(f"Failed to parse hash for {img.path}: {e}")
             parsed_hashes.append(None)
 
     # Union-Find for efficient grouping (shared _UnionFind helper)
@@ -251,7 +253,7 @@ def _find_perceptual_duplicates_bruteforce(
         progress_callback(comparison_count, total_comparisons)
 
     # Collect groups
-    return _collect_duplicate_groups(candidates, uf, start_id)
+    return _collect_duplicate_groups(candidates, uf, start_id, threshold=threshold)
 
 
 def _find_perceptual_duplicates_lsh(
@@ -266,7 +268,7 @@ def _find_perceptual_duplicates_lsh(
     LSH-accelerated perceptual duplicate finding.
 
     Uses Locality-Sensitive Hashing to reduce comparisons from O(n^2) to O(n).
-    Best for large collections (>= 5000 images).
+    Best for large collections (config.LSH_AUTO_THRESHOLD images or more).
     """
     n = len(candidates)
 
@@ -276,7 +278,7 @@ def _find_perceptual_duplicates_lsh(
         try:
             parsed_hashes.append(_parse_phash(img.perceptual_hash))
         except Exception as e:
-            logger.debug(f"Failed to parse hash for {img.path}: {e}")
+            _logger.debug(f"Failed to parse hash for {img.path}: {e}")
             parsed_hashes.append(None)
 
     # Calculate optimal LSH parameters based on collection size
@@ -324,9 +326,9 @@ def _find_perceptual_duplicates_lsh(
         )
 
     # A1: use LSH-level deduplication for moderate-sized collections to reduce
-    # redundant Union-Find lookups. For very large collections (>500K), the seen
+    # redundant Union-Find lookups. For very large collections, the seen
     # set itself becomes too large; rely on the Union-Find skip instead.
-    lsh_deduplicate = n <= 500_000
+    lsh_deduplicate = n <= LSH_DEDUPE_SEEN_SET_MAX
 
     # Compare only LSH candidates using memory-efficient iterator
     pbar: Optional[Any] = None
@@ -399,18 +401,167 @@ def _find_perceptual_duplicates_lsh(
         )
 
     # Collect groups
-    return _collect_duplicate_groups(candidates, uf, start_id)
+    return _collect_duplicate_groups(candidates, uf, start_id, threshold=threshold)
+
+
+def _group_diameter(images: list[ImageInfo]) -> int:
+    """
+    Return the maximum pairwise Hamming distance among a group's images'
+    perceptual hashes (0 if fewer than 2 parse successfully).
+    """
+    hashes = []
+    for img in images:
+        try:
+            hashes.append(_parse_phash(img.perceptual_hash))
+        except Exception:
+            hashes.append(None)
+
+    max_distance = 0
+    for i in range(len(hashes)):
+        if hashes[i] is None:
+            continue
+        for j in range(i + 1, len(hashes)):
+            if hashes[j] is not None:
+                max_distance = max(max_distance, hashes[i] - hashes[j])
+    return max_distance
+
+
+def _split_group_by_complete_linkage(images: list[ImageInfo], threshold: int) -> list[list[ImageInfo]]:
+    """
+    Re-cluster a single over-diameter group via complete-linkage agglomerative
+    clustering: two sub-clusters are only merged if EVERY cross-pair between
+    them is within `threshold` - unlike union-find's single-linkage merging
+    (which only requires ONE qualifying pair and is what let the group's
+    diameter exceed threshold via transitive chaining in the first place).
+
+    O(k^3) in the group size k, which is fine here since a duplicate group
+    that needs splitting is always small (a handful to a few dozen images) -
+    this is never run over the full candidate set, only on the rare
+    already-flagged over-diameter groups.
+    """
+    n = len(images)
+    hashes = []
+    for img in images:
+        try:
+            hashes.append(_parse_phash(img.perceptual_hash))
+        except Exception:
+            hashes.append(None)
+
+    def pair_distance(i: int, j: int) -> float:
+        if hashes[i] is None or hashes[j] is None:
+            return float('inf')  # never let an unparseable hash merge with anything
+        return hashes[i] - hashes[j]
+
+    clusters: list[list[int]] = [[i] for i in range(n)]
+
+    while len(clusters) > 1:
+        best_pair = None
+        best_distance = None
+        for a in range(len(clusters)):
+            for b in range(a + 1, len(clusters)):
+                distance = max(pair_distance(i, j) for i in clusters[a] for j in clusters[b])
+                if distance <= threshold and (best_distance is None or distance < best_distance):
+                    best_distance = distance
+                    best_pair = (a, b)
+        if best_pair is None:
+            break  # no remaining merge would respect the threshold
+        a, b = best_pair
+        clusters[a] = clusters[a] + clusters[b]
+        del clusters[b]
+
+    return [[images[i] for i in cluster] for cluster in clusters]
+
+
+def _split_high_diameter_groups(
+    groups: list[DuplicateGroup],
+    threshold: int,
+    margin: float = 1.0,
+) -> list[DuplicateGroup]:
+    """
+    Post-hoc correction for union-find's transitive chain drift.
+
+    Union-Find only guarantees each UNIONED PAIR was within `threshold` at
+    the moment of union - it says nothing about pairs that ended up sharing
+    a root transitively (A~B~C via two separate qualifying pairs, with A and
+    C themselves further apart than threshold). A burst of near-identical
+    photos taken seconds apart is the common real-world case: consecutive
+    frames are similar, but the first and last can drift beyond threshold,
+    and the whole chain still lands in one group today without this check.
+
+    Any group whose diameter (max pairwise Hamming distance among its
+    members) exceeds `threshold * margin` is split via complete-linkage
+    clustering (see _split_group_by_complete_linkage) into tighter
+    sub-groups where every pair actually IS within threshold - matching what
+    "duplicate group" should mean. Groups within the margin are left
+    untouched without recomputing anything beyond the diameter check itself.
+
+    margin defaults to 1.0 (no slack - any diameter over threshold triggers
+    a split). Deliberately not exposed as a CLI/API flag yet; hardcode a
+    conservative default first and only add a knob if real usage shows it's
+    wrong for a common case.
+    """
+    result: list[DuplicateGroup] = []
+    next_id = max((g.id for g in groups), default=0) + 1
+
+    for group in groups:
+        if group.match_type != "perceptual" or len(group.images) <= 2:
+            # Exact-duplicate groups are hash-identical (no diameter concept
+            # applies); video-perceptual groups use a different distance
+            # metric (average per-frame distance, not a single hash) that
+            # this Hamming-distance-based check can't evaluate; a pair's
+            # diameter is trivially its own single pairwise distance, already
+            # <= threshold by construction.
+            result.append(group)
+            continue
+
+        diameter = _group_diameter(group.images)
+        if diameter <= threshold * margin:
+            result.append(group)
+            continue
+
+        sub_clusters = _split_group_by_complete_linkage(group.images, threshold)
+        if len(sub_clusters) <= 1:
+            # Complete-linkage found no split respecting threshold - keep the
+            # original group rather than silently dropping it. Shouldn't
+            # normally happen given every unioned pair was threshold-checked.
+            result.append(group)
+            continue
+
+        first = True
+        for cluster_images in sub_clusters:
+            if len(cluster_images) < 2:
+                continue  # a singleton split off the chain isn't a duplicate of anything left
+            if first:
+                # Reuse the original group's id for the first sub-cluster so
+                # a group that ends up not needing a real split doesn't
+                # shift every subsequent group's id.
+                result.append(DuplicateGroup(id=group.id, images=cluster_images, match_type=group.match_type))
+                first = False
+            else:
+                result.append(DuplicateGroup(id=next_id, images=cluster_images, match_type=group.match_type))
+                next_id += 1
+
+    return result
 
 
 def _collect_duplicate_groups(
     candidates: list[ImageInfo],
     uf: _UnionFind,
     start_id: int,
+    match_type: str = "perceptual",
+    threshold: Optional[int] = None,
 ) -> list[DuplicateGroup]:
     """
     Collect duplicate groups from a _UnionFind structure.
 
-    Helper function shared by brute-force and LSH implementations.
+    Helper function shared by brute-force, LSH, and video-perceptual
+    implementations.
+
+    Args:
+        threshold: When given (image perceptual matching only - the video
+            path never passes this), groups whose diameter exceeds threshold
+            due to union-find's transitive chain drift are split via
+            _split_high_diameter_groups() before being returned.
     """
     groups: dict[int, list[ImageInfo]] = defaultdict(list)
     for i, img in enumerate(candidates):
@@ -425,10 +576,13 @@ def _collect_duplicate_groups(
             group = DuplicateGroup(
                 id=group_id,
                 images=group_images,
-                match_type="perceptual"
+                match_type=match_type
             )
             duplicate_groups.append(group)
             group_id += 1
+
+    if threshold is not None and match_type == "perceptual":
+        duplicate_groups = _split_high_diameter_groups(duplicate_groups, threshold)
 
     return duplicate_groups
 

@@ -7,10 +7,11 @@ Covers LSH acceleration, caching, format support, and tuning options for large i
 ## Table of Contents
 
 1. [HEIC/HEIF Support](#heicheif-support)
-2. [LSH Acceleration](#lsh-acceleration)
-3. [Performance Optimizations](#performance-optimizations)
-4. [Caching System](#caching-system)
-5. [Troubleshooting](#troubleshooting)
+2. [Video Duplicate Detection](#video-duplicate-detection)
+3. [LSH Acceleration](#lsh-acceleration)
+4. [Performance Optimizations](#performance-optimizations)
+5. [Caching System](#caching-system)
+6. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -32,6 +33,18 @@ To verify HEIC support is active:
 from pixsieve import has_heif_support
 print(has_heif_support())  # True if available
 ```
+
+---
+
+## Video Duplicate Detection
+
+Video support (`--include-videos` / `includeVideos`) is opt-in and off by default — video decoding via `opencv-python-headless` is much slower than image analysis. When enabled:
+
+- Each video is sampled at 5 evenly-spaced frames (skipping the first/last 5% to avoid title cards and fade artifacts) and hashed with the same pHash routine used for images.
+- Duplicate matching for videos is **brute-force only** (no LSH) — video libraries are expected to be orders of magnitude smaller than image libraries, so O(n²) is fine in practice.
+- Video analysis results are cached the same way image analysis is, keyed by path + mtime + size.
+
+Install with `pip install opencv-python-headless` or `pip install pixsieve[video]`.
 
 ---
 
@@ -62,21 +75,35 @@ This reduces comparisons to approximately O(n), with typical speedups of **20–
 ### Auto-Selection
 
 LSH is automatically enabled when:
-- Collection has **≥5,000 images** (configurable via `LSH_AUTO_THRESHOLD`)
+- Collection has **≥1,000 images** (configurable via `LSH_AUTO_THRESHOLD`)
 - Perceptual matching is enabled (not `--exact-only`)
 
 Override with `--lsh` or `--no-lsh` from the CLI.
 
 ### Auto-Tuned Parameters
 
-| Collection Size | Tables | Bits/Table | Expected Recall |
-|----------------|--------|------------|-----------------|
-| < 10K | 15 | 20 | >99.9% |
-| 10K–50K | 18 | 18 | >99.9% |
-| 50K–200K | 20 | 16 | >99.9% |
-| > 200K | 25 | 14 | >99.9% |
+| Collection Size | Tables | Bits/Table | Measured Recall (threshold ≤10) | Measured Recall (threshold 15, at the boundary) |
+|----------------|--------|------------|----------------------------------|--------------------------------------------------|
+| < 10K | 15 | 20 | >99.5% | **~99.1%** |
+| 10K–50K | 18 | 18 | >99.5% | >99.5% |
+| 50K–200K | 20 | 16 | >99.5% | >99.5% |
+| 200K–500K | 25 | 14 | >99.5% | >99.5% |
+| ≥ 500K | 30 | 12 | not separately measured | not separately measured |
 
-**Note:** LSH is probabilistic and may occasionally miss edge-case duplicates at exactly the threshold boundary. For critical applications, use `--no-lsh` to force brute-force comparison.
+These figures are empirically measured (`tests/test_lsh_recall.py`, synthetic bit-injection at
+controlled Hamming distances - not just asserted) rather than theoretical, with one exception noted
+below. For `threshold` values up to 10, every measured tier clears >99.5% recall, including exactly
+at the threshold boundary. The one real exception among the measured tiers: the smallest tier's
+parameters (<10K images, only 15 tables), at `threshold=15` (the top of the recommended 5-15 range)
+and exactly at the boundary distance, measure **around 99.1%** recall - materially below a ">99.9%"
+claim. This matches the caveat below, just with a number behind it now. The ≥500K tier's parameters
+exist in `lsh.py::calculate_optimal_params()` and are exercised by the scanner at that collection
+size, but `tests/test_lsh_recall.py` does not currently include a synthetic recall run at that scale
+- more tables and fewer bits/table than the 200K-500K tier is the same direction of tradeoff that
+tier already makes, so it's expected to behave similarly, but that's an expectation, not a
+measurement.
+
+**Note:** LSH is probabilistic and may occasionally miss edge-case duplicates at exactly the threshold boundary - this is most pronounced for small collections (<10K images) using `threshold` values toward the higher end (15) of the recommended range. For critical applications, use `--no-lsh` to force brute-force comparison, or prefer a lower `threshold` if your collection is small.
 
 ---
 
@@ -131,7 +158,12 @@ PixSieve uses SQLite to cache image analysis results, dramatically speeding up s
 
 - **Cache location:** `~/.duplicate_finder_cache.db`
 - **Cache key:** File path + modification time + file size
-- **Invalidation:** Automatic when files are modified, moved, or deleted
+- **Invalidation:** Automatic when a file's modification time or size changes. A *moved* file
+  is a fresh cache miss under its new path - the old path's row isn't deleted immediately, it
+  becomes orphaned until the next cleanup (`POST /api/cache/cleanup`, or `cleanup_missing()`).
+  **Known edge case:** if a file's content changes but its modification time *and* size both
+  happen to stay identical, the cache has no way to detect this and will keep serving stale
+  results - there is no content-hash fallback in the cache key.
 
 ### Performance Impact
 
@@ -171,7 +203,7 @@ curl -X POST http://localhost:5000/api/cache/clear
 Normal — the first scan must analyze every image. Subsequent scans use caching and are much faster.
 
 **Perceptual matching is slow**
-For collections under 5,000 images, brute-force is used by default. For larger collections, LSH activates automatically. Check with `--verbose` to see which mode is active. Force LSH with `--lsh`.
+For collections under 1,000 images, brute-force is used by default. For larger collections, LSH activates automatically. Check with `--verbose` to see which mode is active. Force LSH with `--lsh`.
 
 **Cache is using too much disk space**
 Use the "Manage Cache" button in the GUI or run `POST /api/cache/cleanup`.

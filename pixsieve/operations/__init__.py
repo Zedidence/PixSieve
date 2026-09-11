@@ -17,10 +17,15 @@ from .cleanup import delete_empty_folders
 from .move import move_to_parent, move_with_structure
 from .rename import rename_random, rename_by_parent
 from .convert import fix_extensions, batch_convert_to_jpg
-from .metadata import randomize_exif_dates, randomize_file_dates
+from .metadata import (
+    randomize_dates,
+    randomize_dates_per_folder,
+)
 from .sort import sort_alphabetical, ColorImageSorter, sort_by_resolution
 from .pipeline import run_pipeline, AVAILABLE_STEPS
 from .repair import scan_and_repair, RepairResult, CorruptionType, RepairStatus
+from .ratings import strip_favorite_ratings
+from .capabilities import OPERATION_VIDEO_SUPPORT, supports_video, needs_video_flag
 
 __all__ = [
     # Cleanup
@@ -35,8 +40,8 @@ __all__ = [
     'fix_extensions',
     'batch_convert_to_jpg',
     # Metadata
-    'randomize_exif_dates',
-    'randomize_file_dates',
+    'randomize_dates',
+    'randomize_dates_per_folder',
     # Sort
     'sort_alphabetical',
     'ColorImageSorter',
@@ -49,4 +54,10 @@ __all__ = [
     'RepairResult',
     'CorruptionType',
     'RepairStatus',
+    # Ratings
+    'strip_favorite_ratings',
+    # Capabilities
+    'OPERATION_VIDEO_SUPPORT',
+    'supports_video',
+    'needs_video_flag',
 ]

@@ -1,5 +1,7 @@
 # PixSieve: UI Modernization & Large-Library Performance Plan
 
+> **Status note (2026-09-05):** This is the original planning document for the modernization effort. Most of what it proposes has since shipped — the CSS design system now lives in `pixsieve/static/css/app.css`, the dark/light theme toggle, thumbnail caching, and several backend performance items below are all implemented. For current, itemized status (done vs. deferred) see [docs/modernization.md](modernization.md) instead; treat this file as historical context for *why* those changes were made, not as a live checklist.
+
 ## Context
 
 PixSieve's web GUI was scaffolded quickly and shows the hallmarks of AI-generated design: a generic `#1a1a2e` navy dark theme, blue-to-purple gradient buttons, 3,592 lines of inline CSS with repeated `linear-gradient` patterns, and no real design system. The backend has excellent algorithmic choices (LSH, Union-Find, WAL SQLite) but has specific bottlenecks that will surface at 500k–750k files: a single write-lock serializing parallel cache writes, un-streamed file discovery, polling-based progress, and LSH params that stop tuning at 200k images.

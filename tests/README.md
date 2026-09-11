@@ -68,12 +68,43 @@ pytest -n auto
 
 ## Test Structure
 
-- `conftest.py` - Shared fixtures and test configuration
-- `test_models.py` - Tests for ImageInfo and DuplicateGroup classes
-- `test_scanner.py` - Tests for image scanning and analysis functions
-- `test_lsh.py` - Tests for LSH (Locality-Sensitive Hashing) implementation
-- `test_database.py` - Tests for SQLite caching functionality
-- `fixtures/` - Test data and sample images (auto-generated)
+### Unit / Integration Tests (`tests/`)
+
+- `conftest.py` — Shared fixtures and test configuration
+- `test_models.py` — Tests for ImageInfo and DuplicateGroup classes
+- `test_scanner.py` — Tests for image scanning and analysis functions
+- `test_scan_orchestrator.py` — Tests for the API scan orchestrator (multi-directory scans, reference folders, video inclusion)
+- `test_video.py` — Tests for video analysis and video duplicate detection (`pixsieve.scanner.video_analysis` / `video_deduplication`)
+- `test_lsh.py` — Tests for LSH (Locality-Sensitive Hashing) implementation
+- `test_database.py` — Tests for SQLite caching functionality
+- `test_api_operations.py` — Tests for file-operation API endpoints
+- `test_cli_operations.py` — Tests for file-operation CLI subcommands
+- `test_operations_*.py` — Per-module operation tests: cleanup, convert, metadata, move, pipeline, ratings, rename, sort
+- `fixtures/` — Test data and sample images (auto-generated)
+
+Current count: **307 tests** total (288 in `tests/`, 19 in `tests/e2e/`) — run `pytest tests/ --collect-only -q` to reconfirm after adding tests.
+
+### End-to-End Tests (`tests/e2e/`)
+
+Browser-level tests using **Playwright**. Require a running PixSieve server.
+
+**Setup:**
+```bash
+pip install playwright pytest-playwright
+# or via extras: pip install -e ".[e2e]"
+playwright install chromium
+```
+
+**Run:**
+```bash
+# Start the server first
+python -m pixsieve.app --no-browser &
+
+# Run E2E suite
+pytest tests/e2e/ --base-url http://localhost:5000
+```
+
+**Coverage:** app shell, Swagger UI, scan form validation, results view (stats, filters, view toggles, compare slider, export dropdown), API health checks.
 
 ## Test Coverage
 

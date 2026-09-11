@@ -2,7 +2,7 @@
 
 Complete reference for all media file operations available in PixSieve.
 
-All operations are accessible via **CLI subcommands**, **Web GUI**, and **REST API**. Every operation defaults to **dry-run mode** for safety.
+Most operations are accessible via **CLI subcommands**, **Web GUI**, and **REST API**. Two ([Sort by Resolution](#sort-by-resolution) and [Repair Corrupt Images](#repair-corrupt-images)) are Web GUI / API only, with no dedicated CLI subcommand — repair is reachable from the CLI indirectly via the `repair_corrupt` [pipeline](#pipeline) step. Every operation defaults to **dry-run mode** for safety.
 
 ---
 
@@ -14,12 +14,14 @@ All operations are accessible via **CLI subcommands**, **Web GUI**, and **REST A
 4. [Rename by Parent](#rename-by-parent)
 5. [Sort Alphabetical](#sort-alphabetical)
 6. [Sort by Color](#sort-by-color)
-7. [Fix Extensions](#fix-extensions)
-8. [Convert to JPG](#convert-to-jpg)
-9. [Randomize EXIF Dates](#randomize-exif-dates)
-10. [Randomize File Dates](#randomize-file-dates)
-11. [Cleanup Empty Folders](#cleanup-empty-folders)
-12. [Pipeline](#pipeline)
+7. [Sort by Resolution](#sort-by-resolution)
+8. [Fix Extensions](#fix-extensions)
+9. [Convert to JPG](#convert-to-jpg)
+10. [Randomize Dates](#randomize-dates)
+11. [Strip Favorite Ratings](#strip-favorite-ratings)
+12. [Repair Corrupt Images](#repair-corrupt-images)
+13. [Cleanup Empty Folders](#cleanup-empty-folders)
+14. [Pipeline](#pipeline)
 
 ---
 
@@ -397,6 +399,63 @@ POST /api/operations/sort/color
 
 ---
 
+## Sort by Resolution
+
+Sort images into subfolders by resolution category and orientation. **Web GUI / API only — no CLI subcommand.**
+
+**Module:** `pixsieve.operations.sort`
+**Function:** `sort_by_resolution()`
+
+### API
+
+```
+POST /api/operations/sort/resolution
+```
+
+```json
+{
+  "directory": "/path/to/photos",
+  "copyFiles": false,
+  "dryRun": true
+}
+```
+
+### Output Folders
+
+Creates `sorted_by_resolution/<category>/<orientation>/`, where:
+
+**Category** (based on the longer edge):
+
+| Category | Longer edge |
+|----------|-------------|
+| `tiny` | < 100 px |
+| `thumbnail` | 100–299 px |
+| `small` | 300–639 px |
+| `medium` | 640–1279 px |
+| `large` | 1280–1919 px |
+| `hd` | 1920–2559 px (1080p+) |
+| `2k` | 2560–3839 px |
+| `4k` | 3840–7679 px |
+| `8k_plus` | 7680 px+ |
+
+**Orientation:** `landscape` (width/height ratio > 1.05), `portrait` (< 0.95), or `square` (roughly 1:1)
+
+### Result Stats
+
+| Key | Description |
+|-----|-------------|
+| `processed` | Number of files successfully moved/copied |
+| `skipped` | Files that could not be read |
+| `errors` | Files that failed during move/copy |
+| `by_category` | Dict mapping `"<category>/<orientation>"` to file count |
+
+### Notes
+
+- Only sorts files in the top-level directory (not recursive)
+- Reports progress via an `on_progress(percent, message)` callback, surfaced through `/api/operations/status`
+
+---
+
 ## Fix Extensions
 
 Scan images and fix file extensions that don't match the actual image format.
@@ -508,20 +567,23 @@ POST /api/operations/convert
 
 ---
 
-## Randomize EXIF Dates
+## Randomize Dates
 
-Randomize EXIF date metadata (DateTimeOriginal, DateTimeDigitized, DateTime) for EXIF-compatible images.
+Randomize filesystem timestamps (mtime/atime, and ctime on Windows) for every image, and optionally also write EXIF date metadata (`DateTimeOriginal`, `DateTimeDigitized`, `DateTime`) for EXIF-compatible formats (JPG/TIFF). This single function replaced the previous separate `randomize_exif_dates()` / `randomize_file_dates()` functions — there is no longer a distinct "EXIF-only" operation.
 
 **Module:** `pixsieve.operations.metadata`
-**Function:** `randomize_exif_dates()`
+**Function:** `randomize_dates()` (plus `randomize_dates_per_folder()` for a per-folder date range, API/GUI only)
 
 ### CLI
 
 ```bash
-python -m pixsieve cli metadata randomize-exif /path/to/photos \
-  --start 2020-01-01 --end 2023-12-31
-python -m pixsieve cli metadata randomize-exif /path/to/photos \
-  --start 2020-01-01 --end 2023-12-31 --no-recursive --no-dry-run
+# Filesystem timestamps + EXIF dates (CLI default)
+python -m pixsieve cli metadata randomize-dates /path/to/photos \
+  --start 2020-01-01 --end 2023-12-31 --no-dry-run
+
+# Filesystem timestamps only
+python -m pixsieve cli metadata randomize-dates /path/to/photos \
+  --start 2020-01-01 --end 2023-12-31 --no-exif --no-dry-run
 ```
 
 | Option | Description |
@@ -529,64 +591,7 @@ python -m pixsieve cli metadata randomize-exif /path/to/photos \
 | `directory` | Target directory (required) |
 | `--start` | Start date YYYY-MM-DD (required) |
 | `--end` | End date YYYY-MM-DD (required) |
-| `--no-recursive` | Do not process subdirectories |
-| `--dry-run` | Simulate without changes (default) |
-| `--no-dry-run` | Actually perform the operation |
-
-### API
-
-```
-POST /api/operations/metadata/randomize-exif
-```
-
-```json
-{
-  "directory": "/path/to/photos",
-  "startDate": "2020-01-01",
-  "endDate": "2023-12-31",
-  "recursive": true,
-  "dryRun": true
-}
-```
-
-### Result Stats
-
-| Key | Description |
-|-----|-------------|
-| `success` | Number of files updated |
-| `failed` | Number of files that failed |
-
-### Notes
-
-- Only processes EXIF-compatible formats: `.jpg`, `.jpeg`, `.tiff`, `.tif`
-- Requires `piexif` library
-- Each file gets a unique random date within the range
-- Sets all three EXIF date fields: DateTimeOriginal, DateTimeDigitized, DateTime
-- Preserves image quality (saves at 95%)
-
----
-
-## Randomize File Dates
-
-Randomize file system timestamps (modification time, access time, and creation time on Windows).
-
-**Module:** `pixsieve.operations.metadata`
-**Function:** `randomize_file_dates()`
-
-### CLI
-
-```bash
-python -m pixsieve cli metadata randomize-dates /path/to/photos \
-  --start 2020-01-01 --end 2023-12-31
-python -m pixsieve cli metadata randomize-dates /path/to/photos \
-  --start 2020-01-01 --end 2023-12-31 --no-recursive --no-dry-run
-```
-
-| Option | Description |
-|--------|-------------|
-| `directory` | Target directory (required) |
-| `--start` | Start date YYYY-MM-DD (required) |
-| `--end` | End date YYYY-MM-DD (required) |
+| `--no-exif` | Skip EXIF date write; filesystem timestamps only |
 | `--no-recursive` | Do not process subdirectories |
 | `--dry-run` | Simulate without changes (default) |
 | `--no-dry-run` | Actually perform the operation |
@@ -603,9 +608,14 @@ POST /api/operations/metadata/randomize-dates
   "startDate": "2020-01-01",
   "endDate": "2023-12-31",
   "recursive": true,
+  "syncExif": false,
   "dryRun": true
 }
 ```
+
+There is also `POST /api/operations/metadata/randomize-dates-per-folder`, which takes a `folderRanges` array of `{folder, startDate, endDate}` entries instead of a single directory/date range, so different photo sets can be randomized into different ranges in one call.
+
+**Important default difference:** the CLI defaults to writing EXIF dates too (`--no-exif` opts out), but the REST API defaults `syncExif` to `false` (filesystem-only) for backward compatibility with the route's old name/behavior. Pass `"syncExif": true` explicitly via the API to also write EXIF dates.
 
 ### Result Stats
 
@@ -616,11 +626,118 @@ POST /api/operations/metadata/randomize-dates
 
 ### Notes
 
-- Works with all image formats (not just EXIF-compatible)
-- Sets `mtime` (modification) and `atime` (access) on all platforms
-- On Windows, also sets `ctime` (creation time) if `pywin32` is installed
-- Gracefully degrades if `pywin32` is not available
-- Each file gets a unique random date within the range
+- Filesystem timestamps are set for all image formats; EXIF writing is limited to `.jpg`, `.jpeg`, `.tiff`, `.tif` and requires `piexif`
+- On Windows, also sets `ctime` (creation time) if `pywin32` is installed; gracefully degrades if not
+- Each file gets a unique random date within the range, processed in parallel (`max_workers`, default 4)
+
+---
+
+## Strip Favorite Ratings
+
+Find and remove 5-star/favorite rating tags (`Rating`, `RatingPercent`, `XMP:Rating`, `EXIF:Rating`, `XMP-xmp:Rating`) from images via the external `exiftool` binary. A file counts as favorited if its rating tag is ≥5 (or `RatingPercent` ≥99).
+
+**Module:** `pixsieve.operations.ratings`
+**Function:** `strip_favorite_ratings()`
+
+### CLI
+
+```bash
+python -m pixsieve cli strip-ratings /path/to/photos
+python -m pixsieve cli strip-ratings /path/to/photos --no-recursive --no-dry-run
+```
+
+| Option | Description |
+|--------|-------------|
+| `directory` | Target directory (required) |
+| `--no-recursive` | Do not process subdirectories |
+| `--dry-run` | Simulate without changes (default) |
+| `--no-dry-run` | Actually perform the operation |
+
+### API
+
+```
+POST /api/operations/metadata/strip-ratings
+```
+
+```json
+{
+  "directory": "/path/to/photos",
+  "recursive": true,
+  "dryRun": true
+}
+```
+
+### Result Stats
+
+| Key | Description |
+|-----|-------------|
+| `scanned` | Number of image files scanned |
+| `favorited` | Number of files with a favorite rating found |
+| `success` | Number of ratings successfully stripped (or would be, in dry-run) |
+| `failed` | Number of files that failed removal |
+| `files` | List of affected file paths |
+
+### Notes
+
+- Requires the `exiftool` binary on `PATH`; returns zeroed stats and an error if it's not available
+- Scanning and removal are batched (200 files/batch for scanning, 100/batch for removal) for speed on large libraries
+- **Destructive**: uses `exiftool -overwrite_original`, so no backup copy is created — dry-run is the only safety net
+
+---
+
+## Repair Corrupt Images
+
+Scan for corrupt or unreadable images, attempt automated repair, and quarantine files that can't be fixed. **Web GUI / API (and pipeline `repair_corrupt` step) only — no standalone CLI subcommand.**
+
+**Module:** `pixsieve.operations.repair`
+**Function:** `scan_and_repair()`
+
+Repair strategies are attempted in order until one succeeds:
+
+1. **Re-encode** — open with `LOAD_TRUNCATED_IMAGES=True`, copy pixel data, save back. Fixes truncated files and minor pixel corruption.
+2. **Strip EXIF + re-save** — fixes bad/malformed metadata blocks.
+3. **Convert to PNG** — last resort: recover whatever pixel data PIL can read and save as a clean PNG, replacing the original.
+
+Files PIL can't identify at all (`INVALID_FORMAT`) skip straight to quarantine, since no repair strategy applies.
+
+### API
+
+```
+POST /api/operations/repair
+```
+
+```json
+{
+  "directory": "/path/to/photos",
+  "trashFolder": "/path/to/photos/.trash",
+  "attemptRepair": true,
+  "quarantineUnfixable": true,
+  "workers": 4,
+  "dryRun": true
+}
+```
+
+`trashFolder` is required (absolute path); it's created on demand.
+
+### Result Stats
+
+| Key | Description |
+|-----|-------------|
+| `checked` | Total files examined |
+| `clean` | Files with no corruption |
+| `repaired` | Files successfully repaired in place |
+| `quarantined` | Files moved to `trashFolder` |
+| `permission_errors` | Files that could not be read at all |
+| `skipped` | Files skipped (read-only, `INVALID_FORMAT` with quarantine disabled, etc.) |
+| `errors` | Unexpected errors during processing |
+| `problems` | Per-file detail (path, corruption type, status, repair attempts, trash path) for every non-clean file |
+
+### Notes
+
+- Files already inside `trashFolder` are excluded from scanning
+- Repair modifies files in place — always dry-run first
+- Permission checks (readable/writable/parent-writable) are reported per file and never crash the scan
+- Also available as the `repair_corrupt` step in [pipeline](#pipeline); the CLI's `pipeline --steps` accepts it but has no way to set a custom trash folder, so it falls back to the built-in default trash directory
 
 ---
 
@@ -685,9 +802,9 @@ Chain multiple operations together in a single workflow. Steps execute in order.
 |----------|-------------|
 | `random_rename` | Rename files to random alphanumeric names |
 | `convert_jpg` | Convert PNG/BMP/WEBP to JPG |
-| `randomize_exif` | Randomize EXIF dates (requires start/end dates) |
-| `randomize_dates` | Randomize file system dates (requires start/end dates) |
+| `randomize_dates` | Randomize filesystem + EXIF dates (requires start/end dates) |
 | `cleanup_empty` | Delete empty folders |
+| `repair_corrupt` | Scan and repair corrupt images (requires a trash folder — via API's `trashDir`, or defaults to `DEFAULT_TRASH_DIR` from the CLI) |
 
 ### CLI
 
@@ -696,9 +813,9 @@ Chain multiple operations together in a single workflow. Steps execute in order.
 python -m pixsieve cli pipeline /path/to/photos \
   --steps "random_rename,convert_jpg,cleanup_empty"
 
-# Pipeline with date operations
+# Pipeline with a date operation
 python -m pixsieve cli pipeline /path/to/photos \
-  --steps "random_rename,randomize_exif,randomize_dates,cleanup_empty" \
+  --steps "random_rename,randomize_dates,cleanup_empty" \
   --start 2020-01-01 --end 2023-12-31 --no-dry-run
 
 # Customize rename and convert settings
@@ -736,9 +853,12 @@ POST /api/operations/pipeline
   "jpgQuality": 95,
   "deleteOriginals": false,
   "recursive": true,
+  "trashDir": "/path/to/photos/.trash",
   "dryRun": true
 }
 ```
+
+`trashDir` is only required if `repair_corrupt` is included in `steps`; if omitted, it defaults to the built-in `DEFAULT_TRASH_DIR`.
 
 ### Result
 
@@ -755,7 +875,7 @@ Returns a dictionary mapping step names to their individual result dictionaries:
 ### Notes
 
 - Steps execute sequentially in the order specified
-- Date steps (`randomize_exif`, `randomize_dates`) require `--start` and `--end`
+- The `randomize_dates` step requires `--start`/`--end` (or `startDate`/`endDate` via the API)
 - Unknown step names cause the pipeline to abort before execution
 - Each step prints progress with `[STEP X/N]` headers
 
@@ -774,12 +894,18 @@ from pixsieve.operations import (
     rename_by_parent,
     fix_extensions,
     batch_convert_to_jpg,
-    randomize_exif_dates,
-    randomize_file_dates,
+    randomize_dates,
+    randomize_dates_per_folder,
     sort_alphabetical,
+    sort_by_resolution,
     ColorImageSorter,
     run_pipeline,
     AVAILABLE_STEPS,
+    scan_and_repair,
+    RepairResult,
+    CorruptionType,
+    RepairStatus,
+    strip_favorite_ratings,
 )
 
 # Move files to parent directory
@@ -793,12 +919,25 @@ stats = rename_random('/photos', name_length=16, workers=8, dry_run=True)
 sorter = ColorImageSorter('/photos')
 stats = sorter.sort_by_dominant_color(dry_run=True)
 
+# Sort by resolution/orientation
+stats = sort_by_resolution('/photos', dry_run=True)
+
 # Convert images to JPG
 stats = batch_convert_to_jpg('/photos', quality=90, dry_run=True)
 
-# Randomize EXIF dates
+# Randomize filesystem + EXIF dates
 from datetime import datetime
-stats = randomize_exif_dates('/photos', datetime(2020, 1, 1), datetime(2023, 12, 31), dry_run=True)
+stats = randomize_dates(
+    '/photos', datetime(2020, 1, 1), datetime(2023, 12, 31),
+    sync_exif=True, dry_run=True,
+)
+
+# Strip 5-star/favorite rating tags (requires exiftool on PATH)
+stats = strip_favorite_ratings('/photos', dry_run=True)
+
+# Scan for corrupt images and quarantine unfixable ones
+stats = scan_and_repair('/photos', trash_folder='/photos/.trash', dry_run=True)
+print(f"{stats['clean']} clean, {stats['repaired']} repaired, {stats['quarantined']} quarantined")
 
 # Run a pipeline
 results = run_pipeline(

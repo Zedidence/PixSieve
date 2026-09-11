@@ -138,13 +138,23 @@ class MaintenanceOperations:
     def clear(self):
         """Clear all cached data."""
         try:
+            # Connections here run in autocommit mode (isolation_level=None),
+            # so these two DELETEs are not one atomic transaction -- if the
+            # second raises, the first has already taken effect. Narrowed
+            # from a bare `except Exception` (which also swallowed vacuum()
+            # failures identically, though vacuum() never actually raises --
+            # it has its own internal try/except) so a real DB error here is
+            # reported instead of hidden alongside the "already handled"
+            # case.
             with self.conn_mgr.connection(exclusive=True) as conn:
                 conn.execute("DELETE FROM images")
                 conn.execute("DELETE FROM scan_history")
-            # VACUUM outside transaction
-            self.vacuum()
-        except Exception as e:
-            logger.warning(f"Failed to clear cache: {e}")
+        except sqlite3.OperationalError as e:
+            logger.warning(f"Failed to clear cache tables (cache may be partially cleared): {e}")
+            return
+        # VACUUM outside transaction; a failure here doesn't mean the
+        # DELETEs above didn't take effect.
+        self.vacuum()
 
     def vacuum(self):
         """Compact the database file."""

@@ -11,6 +11,7 @@ import logging
 import sys
 from pathlib import Path
 
+from ..config import IMAGE_EXTENSIONS, RATING_EXTENSIONS, resolve_extensions
 from ..operations import (
     delete_empty_folders,
     move_to_parent,
@@ -21,11 +22,12 @@ from ..operations import (
     ColorImageSorter,
     fix_extensions,
     batch_convert_to_jpg,
-    randomize_exif_dates,
-    randomize_file_dates,
+    randomize_dates,
     run_pipeline,
+    strip_favorite_ratings,
 )
 from ..utils.operations import parse_date
+from ..utils.platform import check_exiftool_available
 
 
 class OperationsOrchestrator:
@@ -58,6 +60,7 @@ class OperationsOrchestrator:
             'convert': self._handle_convert,
             'metadata': self._handle_metadata,
             'cleanup': self._handle_cleanup,
+            'strip-ratings': self._handle_ratings,
             'pipeline': self._handle_pipeline,
         }
 
@@ -105,10 +108,15 @@ class OperationsOrchestrator:
             return 1
 
         self._print_dry_run_banner()
-        extensions = None
+        explicit = None
         if getattr(self.args, 'extensions', None):
-            extensions = {ext if ext.startswith('.') else f'.{ext}'
-                          for ext in self.args.extensions}
+            explicit = {ext if ext.startswith('.') else f'.{ext}'
+                        for ext in self.args.extensions}
+        extensions = resolve_extensions(
+            IMAGE_EXTENSIONS,
+            getattr(self.args, 'include_videos', False),
+            extra=explicit,
+        )
 
         self.logger.info(f"Moving files to parent: {self.args.directory}")
         stats = move_to_parent(
@@ -142,10 +150,15 @@ class OperationsOrchestrator:
         mode = self.args.rename_mode
 
         if mode == 'random':
-            extensions = None
+            explicit = None
             if getattr(self.args, 'extensions', None):
-                extensions = {ext if ext.startswith('.') else f'.{ext}'
-                              for ext in self.args.extensions}
+                explicit = {ext if ext.startswith('.') else f'.{ext}'
+                            for ext in self.args.extensions}
+            extensions = resolve_extensions(
+                IMAGE_EXTENSIONS,
+                getattr(self.args, 'include_videos', False),
+                extra=explicit,
+            )
 
             self.logger.info(f"Random rename in: {self.args.directory}")
             stats = rename_random(
@@ -187,7 +200,10 @@ class OperationsOrchestrator:
             copy_files = getattr(self.args, 'copy', False)
             self.logger.info(f"Color sort ({method}) in: {self.args.directory}")
 
-            sorter = ColorImageSorter(self.args.directory)
+            sorter = ColorImageSorter(
+                self.args.directory,
+                include_videos=getattr(self.args, 'include_videos', False),
+            )
 
             if method == 'dominant':
                 stats = sorter.sort_by_dominant_color(
@@ -254,35 +270,32 @@ class OperationsOrchestrator:
         self._print_dry_run_banner()
         mode = self.args.metadata_mode
 
-        start_date = parse_date(self.args.start)
-        end_date = parse_date(self.args.end)
-
-        if start_date is None:
+        try:
+            start_date = parse_date(self.args.start)
+        except ValueError:
             self.logger.error(f"Invalid start date: {self.args.start}")
             return 1
-        if end_date is None:
+        try:
+            end_date = parse_date(self.args.end)
+        except ValueError:
             self.logger.error(f"Invalid end date: {self.args.end}")
             return 1
 
         recursive = not getattr(self.args, 'no_recursive', False)
 
-        if mode == 'randomize-exif':
-            self.logger.info(f"Randomizing EXIF dates in: {self.args.directory}")
-            stats = randomize_exif_dates(
+        if mode == 'randomize-dates':
+            self.logger.info(f"Randomizing dates in: {self.args.directory}")
+            stats = randomize_dates(
                 self.args.directory,
                 start_date=start_date,
                 end_date=end_date,
                 recursive=recursive,
                 dry_run=self.dry_run,
-            )
-        elif mode == 'randomize-dates':
-            self.logger.info(f"Randomizing file dates in: {self.args.directory}")
-            stats = randomize_file_dates(
-                self.args.directory,
-                start_date=start_date,
-                end_date=end_date,
-                recursive=recursive,
-                dry_run=self.dry_run,
+                sync_exif=not getattr(self.args, 'no_exif', False),
+                extensions=resolve_extensions(
+                    IMAGE_EXTENSIONS,
+                    getattr(self.args, 'include_videos', False),
+                ),
             )
         else:
             self.logger.error(f"Unknown metadata mode: {mode}")
@@ -304,6 +317,29 @@ class OperationsOrchestrator:
         self._print_stats(stats)
         return 0
 
+    def _handle_ratings(self) -> int:
+        if not self._validate_directory():
+            return 1
+
+        available, reason = check_exiftool_available()
+        if not available:
+            self.logger.error(f"exiftool not available: {reason}")
+            return 1
+
+        self._print_dry_run_banner()
+        self.logger.info(f"Scanning for favorite/5-star ratings in: {self.args.directory}")
+        stats = strip_favorite_ratings(
+            self.args.directory,
+            recursive=not getattr(self.args, 'no_recursive', False),
+            dry_run=self.dry_run,
+            extensions=resolve_extensions(
+                RATING_EXTENSIONS,
+                getattr(self.args, 'include_videos', False),
+            ),
+        )
+        self._print_stats(stats)
+        return 0
+
     def _handle_pipeline(self) -> int:
         if not self._validate_directory():
             return 1
@@ -315,16 +351,17 @@ class OperationsOrchestrator:
         # Parse optional dates
         start_date = None
         end_date = None
-        date_steps = {'randomize_exif', 'randomize_dates'}
+        date_steps = {'randomize_dates'}
         if date_steps & set(steps):
             if not self.args.start or not self.args.end:
                 self.logger.error(
                     "Date steps require --start and --end dates"
                 )
                 return 1
-            start_date = parse_date(self.args.start)
-            end_date = parse_date(self.args.end)
-            if start_date is None or end_date is None:
+            try:
+                start_date = parse_date(self.args.start)
+                end_date = parse_date(self.args.end)
+            except ValueError:
                 self.logger.error("Invalid date format. Use YYYY-MM-DD.")
                 return 1
 
@@ -339,6 +376,7 @@ class OperationsOrchestrator:
             delete_originals=getattr(self.args, 'delete_originals', False),
             recursive=not getattr(self.args, 'no_recursive', False),
             dry_run=self.dry_run,
+            include_videos=getattr(self.args, 'include_videos', False),
         )
 
         print("\nPipeline Results:")

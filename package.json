@@ -1,0 +1,15 @@
+{
+  "name": "pixsieve-frontend-tests",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Minimal JS test setup for pixsieve/static/js/*.js -- targeted unit tests for modal lifecycle, focus-trap, and keyboard-handling logic. Not a build system: the frontend still ships as plain <script> tags, no bundler.",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.1",
+    "vitest": "^2.1.8"
+  }
+}

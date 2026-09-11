@@ -19,21 +19,35 @@ Public API:
 from __future__ import annotations
 
 # Import public functions from submodules
-from .file_discovery import find_image_files, iter_image_chunks
+from .file_discovery import (
+    find_image_files,
+    find_image_files_multi,
+    iter_image_chunks,
+    iter_image_chunks_multi,
+)
 from .hashing import (
     calculate_file_hash,
     calculate_perceptual_hash,
     calculate_quality_score,
+    calculate_sharpness_score,
 )
 from .analysis import analyze_image
-from .parallel import analyze_images_parallel, analyze_images_streaming
+from .video_analysis import analyze_video
+from .parallel import (
+    analyze_images_parallel,
+    analyze_images_streaming,
+    analyze_videos_parallel,
+    analyze_videos_streaming,
+    analyze_media,
+)
 from .deduplication import (
     find_exact_duplicates,
     find_perceptual_duplicates,
 )
+from .video_deduplication import find_video_perceptual_duplicates
 
-# Import dependencies for has_heif_support function
-from .dependencies import HAS_HEIF_SUPPORT
+# Import dependencies for has_heif_support/has_video_support functions
+from .dependencies import HAS_HEIF_SUPPORT, HAS_VIDEO_SUPPORT
 
 
 def has_heif_support() -> bool:
@@ -41,22 +55,36 @@ def has_heif_support() -> bool:
     return HAS_HEIF_SUPPORT
 
 
+def has_video_support() -> bool:
+    """Check if video (opencv) support is available."""
+    return HAS_VIDEO_SUPPORT
+
+
 # Public API exports
 __all__ = [
     # File discovery
     'find_image_files',
+    'find_image_files_multi',
     'iter_image_chunks',
+    'iter_image_chunks_multi',
     # Hashing functions
     'calculate_file_hash',
     'calculate_perceptual_hash',
     'calculate_quality_score',
+    'calculate_sharpness_score',
     # Image analysis
     'analyze_image',
+    'analyze_video',
     'analyze_images_parallel',
     'analyze_images_streaming',
+    'analyze_videos_parallel',
+    'analyze_videos_streaming',
+    'analyze_media',
     # Duplicate detection
     'find_exact_duplicates',
     'find_perceptual_duplicates',
+    'find_video_perceptual_duplicates',
     # Feature detection
     'has_heif_support',
+    'has_video_support',
 ]

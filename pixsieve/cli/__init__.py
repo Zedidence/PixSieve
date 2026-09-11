@@ -20,7 +20,7 @@ from .operations_orchestrator import OperationsOrchestrator
 from .arg_parser import create_parser, parse_arguments
 from .actions import handle_duplicates
 from .reporting import print_duplicate_report
-from .interactive import prompt_for_directory, confirm_action
+from .interactive import confirm_action
 
 
 def main() -> int:
@@ -53,6 +53,5 @@ __all__ = [
     'parse_arguments',
     'handle_duplicates',
     'print_duplicate_report',
-    'prompt_for_directory',
     'confirm_action',
 ]

@@ -1,0 +1,22 @@
+services:
+  pixsieve:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      # Mount your photo library here (read-only recommended)
+      # Example: - /home/user/Photos:/photos:ro
+      - ${PHOTO_DIR:-./}:/photos:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: on-failure:5
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
