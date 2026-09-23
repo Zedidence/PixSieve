@@ -19,7 +19,10 @@ from typing import Any
 
 from flask import Blueprint, jsonify, request, Response
 
-from ..config import IMAGE_EXTENSIONS, RATING_EXTENSIONS, resolve_extensions
+from ..config import (
+    IMAGE_EXTENSIONS, RATING_EXTENSIONS, HDD_WRITE_WORKERS, DEFAULT_API_WORKERS,
+    resolve_extensions,
+)
 from ..operations import (
     delete_empty_folders,
     move_to_parent,
@@ -41,6 +44,7 @@ from ..operations import (
     supports_video,
 )
 from ..utils.platform import check_exiftool_available
+from ..utils.disk_type import tailor_workers
 from ..utils.validators import validate_directory as _shared_validate_directory
 from .schemas import (
     parse_request,
@@ -291,6 +295,7 @@ def api_move_to_parent():
         body.directory,
         extensions=extensions,
         dry_run=body.dryRun,
+        max_workers=tailor_workers(body.directory, 4, HDD_WRITE_WORKERS),
     ):
         return _busy_response()
     return jsonify({'status': 'started', 'operation': 'move-to-parent'})
@@ -316,6 +321,8 @@ def api_move():
         body.destination,
         overwrite=body.overwrite,
         dry_run=body.dryRun,
+        # Tailored on the destination - that's where the actual writes land.
+        max_workers=tailor_workers(body.destination, 4, HDD_WRITE_WORKERS),
     ):
         return _busy_response()
     return jsonify({'status': 'started', 'operation': 'move'})
@@ -344,6 +351,10 @@ def api_rename_random():
         IMAGE_EXTENSIONS, include_videos, extra=_parse_extensions(body.extensions),
     )
 
+    workers = body.workers
+    if workers == DEFAULT_API_WORKERS:
+        workers = tailor_workers(body.directory, workers, HDD_WRITE_WORKERS)
+
     if not _run_operation(
         'rename-random',
         rename_random,
@@ -352,7 +363,7 @@ def api_rename_random():
         extensions=extensions,
         recursive=body.recursive,
         dry_run=body.dryRun,
-        workers=body.workers,
+        workers=workers,
     ):
         return _busy_response()
     return jsonify({'status': 'started', 'operation': 'rename-random'})

@@ -11,7 +11,8 @@ import logging
 import sys
 from pathlib import Path
 
-from ..config import IMAGE_EXTENSIONS, RATING_EXTENSIONS, resolve_extensions
+from ..config import IMAGE_EXTENSIONS, RATING_EXTENSIONS, HDD_WRITE_WORKERS, resolve_extensions
+from ..utils.disk_type import tailor_workers
 from ..operations import (
     delete_empty_folders,
     move_to_parent,
@@ -119,10 +120,14 @@ class OperationsOrchestrator:
         )
 
         self.logger.info(f"Moving files to parent: {self.args.directory}")
+        workers = tailor_workers(str(self.args.directory), 4, HDD_WRITE_WORKERS)
+        if workers != 4:
+            self.logger.info(f"HDD detected - using {workers} write workers instead of 4")
         stats = move_to_parent(
             self.args.directory,
             extensions=extensions,
             dry_run=self.dry_run,
+            max_workers=workers,
         )
         self._print_stats(stats)
         return 0
@@ -133,11 +138,16 @@ class OperationsOrchestrator:
 
         self._print_dry_run_banner()
         self.logger.info(f"Moving files: {self.args.directory} -> {self.args.destination}")
+        # Tailor on the destination - that's where the actual writes land.
+        workers = tailor_workers(str(self.args.destination), 4, HDD_WRITE_WORKERS)
+        if workers != 4:
+            self.logger.info(f"HDD detected at destination - using {workers} write workers instead of 4")
         stats = move_with_structure(
             self.args.directory,
             self.args.destination,
             overwrite=getattr(self.args, 'overwrite', False),
             dry_run=self.dry_run,
+            max_workers=workers,
         )
         self._print_stats(stats)
         return 0
@@ -161,13 +171,19 @@ class OperationsOrchestrator:
             )
 
             self.logger.info(f"Random rename in: {self.args.directory}")
+            workers = getattr(self.args, 'workers', 4)
+            if workers == 4:
+                tailored = tailor_workers(str(self.args.directory), workers, HDD_WRITE_WORKERS)
+                if tailored != workers:
+                    self.logger.info(f"HDD detected - using {tailored} write workers instead of {workers}")
+                workers = tailored
             stats = rename_random(
                 self.args.directory,
                 name_length=getattr(self.args, 'length', 12),
                 extensions=extensions,
                 recursive=not getattr(self.args, 'no_recursive', False),
                 dry_run=self.dry_run,
-                workers=getattr(self.args, 'workers', 4),
+                workers=workers,
             )
         elif mode == 'parent':
             self.logger.info(f"Parent-based rename in: {self.args.directory}")

@@ -26,10 +26,12 @@ from ..database import CacheStats
 from ..config import (
     LSH_AUTO_THRESHOLD,
     LARGE_LIBRARY_WORKERS,
+    HDD_ANALYSIS_WORKERS,
     PERCEPTUAL_AUTO_DISABLE_THRESHOLD,
     DEFAULT_API_WORKERS,
 )
 from ..utils import formatters, selection
+from ..utils.disk_type import tailor_workers
 
 # Module logger
 _logger = logging.getLogger(__name__)
@@ -422,6 +424,21 @@ class ScanOrchestrator:
         if self.workers == DEFAULT_API_WORKERS:
             effective_workers = LARGE_LIBRARY_WORKERS
             _logger.info(f"Workers left at default - using large-library default of {effective_workers}")
+
+        # HDD tailoring: only when the caller left `workers` at its default
+        # (an explicit choice, e.g. deliberately throttling on a slow external
+        # drive, is never overridden). Caps down only for a confirmed
+        # rotational drive; SSD/unknown media keep the large-library default.
+        if self.workers == DEFAULT_API_WORKERS:
+            primary_dir = self.directories[0]['path']
+            tailored = tailor_workers(primary_dir, effective_workers, HDD_ANALYSIS_WORKERS)
+            if tailored != effective_workers:
+                _logger.info(
+                    f"HDD detected at {primary_dir} - reducing workers "
+                    f"{effective_workers} -> {tailored} to avoid seek thrashing"
+                )
+                effective_workers = tailored
+                self.scan_state.settings['detected_media_type'] = 'hdd'
 
         images, cache_stats = analyze_images_streaming(
             _chunks(),

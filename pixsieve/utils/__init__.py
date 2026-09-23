@@ -8,6 +8,7 @@ Provides:
 - platform: Platform-specific capability checks
 - exporters: Export duplicate results to files
 - operations: Shared utilities for media operations
+- disk_type: HDD/SSD detection for concurrency tuning
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from . import selection
 from . import platform
 from . import exporters
 from . import operations
+from . import disk_type
 
 # Export commonly used functions and classes
 from .formatters import format_number, format_time_estimate, format_size
@@ -53,6 +55,7 @@ from .operations import (
     make_progress_bar,
     parse_date,
 )
+from .disk_type import detect_media_type, is_rotational, tailor_workers
 
 __all__ = [
     # Submodules
@@ -62,6 +65,7 @@ __all__ = [
     'platform',
     'exporters',
     'operations',
+    'disk_type',
     # Formatters
     'format_number',
     'format_time_estimate',
@@ -94,4 +98,8 @@ __all__ = [
     'find_files',
     'make_progress_bar',
     'parse_date',
+    # Disk type
+    'detect_media_type',
+    'is_rotational',
+    'tailor_workers',
 ]

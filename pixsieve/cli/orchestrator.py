@@ -22,10 +22,14 @@ from ..scanner import (
     find_perceptual_duplicates,
     find_video_perceptual_duplicates,
 )
-from ..config import DEFAULT_WORKERS, LARGE_LIBRARY_THRESHOLD, LARGE_LIBRARY_WORKERS, VIDEO_EXTENSIONS
+from ..config import (
+    DEFAULT_WORKERS, LARGE_LIBRARY_THRESHOLD, LARGE_LIBRARY_WORKERS,
+    HDD_ANALYSIS_WORKERS, VIDEO_EXTENSIONS,
+)
 from ..models import format_size
 from ..utils.exporters import export_results
 from ..utils.platform import check_symlink_support
+from ..utils.disk_type import tailor_workers
 from ..utils.selection import resolve_group_selections, stamp_group_selections
 from .arg_parser import parse_arguments
 from .interactive import prompt_for_directories, confirm_action
@@ -343,6 +347,20 @@ class CLIOrchestrator:
                 f"Large library ({len(self.image_files):,} files >= {LARGE_LIBRARY_THRESHOLD:,}) - "
                 f"scaling workers {self.args.workers} -> {effective_workers}"
             )
+
+        # HDD tailoring: only when the user hasn't explicitly chosen --workers
+        # (same "explicit choice is never overridden" rule as the large-library
+        # scaling above). A confirmed rotational drive gets capped down to
+        # avoid seek thrashing; SSDs and unconfirmed/unknown media are untouched.
+        if self.args.workers == DEFAULT_WORKERS:
+            primary_dir = str(self.args.directory[0])
+            tailored = tailor_workers(primary_dir, effective_workers, HDD_ANALYSIS_WORKERS)
+            if tailored != effective_workers:
+                self.logger.info(
+                    f"HDD detected at {primary_dir} - reducing workers "
+                    f"{effective_workers} -> {tailored} to avoid seek thrashing"
+                )
+                effective_workers = tailored
 
         self.logger.info(f"Analyzing {len(self.image_files):,} images (this may take a while)...")
         _phase_start = time.monotonic()

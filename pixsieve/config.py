@@ -95,6 +95,16 @@ DEFAULT_THRESHOLD = 10
 _cpu_count = os.cpu_count() or 1
 DEFAULT_WORKERS = min(max(4, _cpu_count * 2), 16)
 
+# Worker caps applied when utils/disk_type.py confirms the target directory
+# sits on a rotational (HDD) drive rather than an SSD. A spinning disk's
+# throughput *drops* past a small number of concurrent random-access
+# operations (seek thrashing), unlike CPU-bound work or SSDs where the
+# CPU-scaled defaults above keep helping. These only ever pull a worker
+# count *down* from whatever the caller already chose - never up, and never
+# applied at all when disk-type detection can't confirm 'hdd'.
+HDD_ANALYSIS_WORKERS = 4   # read-heavy: file discovery + image/video analysis
+HDD_WRITE_WORKERS = 2      # write-heavy: move/rename/convert operations
+
 # Maximum image pixels before PIL raises DecompressionBombWarning
 # Default PIL limit ~89MP; raised for high-res scans and panoramas
 # Override via PIXSIEVE_MAX_IMAGE_PIXELS env variable or set directly
