@@ -587,12 +587,13 @@ def api_rename_image():
     if abs_new_path == abs_path:
         return jsonify({'error': 'New name is the same as the current name'}), 400
 
-    # A case-only rename on a case-insensitive filesystem (e.g. Windows NTFS)
-    # would make os.path.exists(new_path) report True even though it's the
-    # SAME file — let os.rename handle that natively rather than wrongly
-    # rejecting a legitimate capitalization fix as a collision.
-    same_file_different_case = os.path.normcase(abs_new_path) == os.path.normcase(abs_path)
-    if os.path.exists(new_path) and not same_file_different_case:
+    # A case-only rename on a case-insensitive filesystem (e.g. Windows NTFS,
+    # macOS APFS) would make os.path.exists(new_path) report True even though
+    # it's the SAME file — let os.rename handle that natively rather than
+    # wrongly rejecting a legitimate capitalization fix as a collision.
+    # samefile() compares the underlying file, so it covers both platforms;
+    # normcase() only folds case on Windows.
+    if os.path.exists(new_path) and not os.path.samefile(path, new_path):
         return jsonify({'error': f'A file named "{new_name}" already exists'}), 409
 
     try:
