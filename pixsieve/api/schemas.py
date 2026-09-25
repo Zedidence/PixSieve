@@ -8,7 +8,7 @@ return a typed model instance (or an HTTP 400 response on validation failure).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 from flask import jsonify
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
@@ -68,7 +68,7 @@ class ScanRequest(BaseModel):
     perceptualOnly: bool = False
     recursive: bool = True
     useCache: bool = True
-    useLsh: bool | None = None
+    useLsh: Optional[bool] = None
     workers: int = Field(DEFAULT_API_WORKERS, ge=1, le=32)
     resolveSymlinks: bool = True
     autoSelectStrategy: str = 'quality'
@@ -177,7 +177,7 @@ class RenameImageRequest(BaseModel):
 class BatchOperationRequest(BaseModel):
     operation: str = Field(..., min_length=1)
     files: list[str] = Field(..., min_length=1)
-    destination: str | None = None
+    destination: Optional[str] = None
     quality: int = Field(90, ge=1, le=100)
 
     @model_validator(mode='after')
@@ -204,12 +204,12 @@ class MoveRequest(DirectoryRequest):
 
 class MoveToParentRequest(DirectoryRequest):
     includeVideos: bool = False
-    extensions: list[str] | None = None
+    extensions: Optional[list[str]] = None
 
 
 class RenameRandomRequest(DirectoryRequest):
     nameLength: int = Field(12, ge=4, le=64)
-    extensions: list[str] | None = None
+    extensions: Optional[list[str]] = None
     recursive: bool = True
     workers: int = Field(DEFAULT_API_WORKERS, ge=1, le=16)
     includeVideos: bool = False
@@ -242,7 +242,7 @@ class FolderDateRange(BaseModel):
     folder: str = Field(..., min_length=1)
     startDate: str = Field(..., min_length=10, max_length=10)
     endDate: str = Field(..., min_length=10, max_length=10)
-    name: str | None = None
+    name: Optional[str] = None
 
 
 class RandomizeDatesPerFolderRequest(BaseModel):
@@ -273,9 +273,9 @@ class SortResolutionRequest(DirectoryRequest):
 
 class PipelineRequest(DirectoryRequest):
     steps: list[str] = Field(..., min_length=1)
-    startDate: str | None = Field(None, min_length=10, max_length=10)
-    endDate: str | None = Field(None, min_length=10, max_length=10)
-    trashDir: str | None = None
+    startDate: Optional[str] = Field(None, min_length=10, max_length=10)
+    endDate: Optional[str] = Field(None, min_length=10, max_length=10)
+    trashDir: Optional[str] = None
     nameLength: int = Field(12, ge=4, le=64)
     jpgQuality: int = Field(95, ge=1, le=100)
     deleteOriginals: bool = False
