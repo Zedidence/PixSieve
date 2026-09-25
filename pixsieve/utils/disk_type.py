@@ -106,7 +106,10 @@ def _detect_windows(path: str) -> str:
     # must behave the same wherever it runs (e.g. its tests on Linux/macOS CI).
     drive, _ = ntpath.splitdrive(path)
     drive_letter = drive.rstrip(':').upper()
-    if not drive_letter:
+    # Only a plain "X:" drive can be looked up. A UNC path yields a
+    # "\\server\share" drive here, which must not reach the PowerShell
+    # script below - it's interpolated into the command string.
+    if len(drive_letter) != 1 or not ('A' <= drive_letter <= 'Z'):
         return 'unknown'
 
     script = (

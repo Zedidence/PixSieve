@@ -98,9 +98,16 @@ class TestWindowsDetection:
         self._mock_run(monkeypatch, stdout='', returncode=1)
         assert disk_type._detect_windows('Z:\\') == 'unknown'
 
-    def test_no_drive_letter_is_unknown(self):
-        # A UNC path (\\server\share\...) has no drive letter to resolve.
+    def test_no_drive_letter_is_unknown(self, monkeypatch):
+        # A UNC path (\\server\share\...) has no drive letter to resolve, and
+        # must not reach PowerShell at all (its "drive" is interpolated into
+        # the script).
+        def fail_run(*args, **kwargs):
+            raise AssertionError("PowerShell should not be invoked for a UNC path")
+        monkeypatch.setattr(disk_type.subprocess, 'run', fail_run)
+
         assert disk_type._detect_windows('\\\\server\\share\\photos') == 'unknown'
+        assert disk_type._detect_windows("\\\\server\\x'; evil; '\\photos") == 'unknown'
 
 
 class TestLinuxDetection:
