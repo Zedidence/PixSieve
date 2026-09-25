@@ -509,7 +509,10 @@ class TestAnalyzeImagesStreaming:
         assert stats.cache_misses == 1
         assert {r.path for r in results} == set(paths)
 
-        # The freshly-analyzed file should now be persisted too.
+        # The freshly-analyzed file should now be persisted too. put_batch()
+        # goes through the background writer and get() doesn't flush it
+        # (unlike get_batch()), so flush first to avoid racing the write.
+        cache.flush_writes()
         cached_now = cache.get(sample_images['identical1'])
         assert cached_now is not None
         assert cached_now.file_hash != ""

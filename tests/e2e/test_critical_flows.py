@@ -11,8 +11,10 @@ import tempfile
 
 import pytest
 
-# Skip the whole module gracefully if playwright is not installed
+# Skip the whole module gracefully if playwright or its pytest plugin (which
+# provides the ``page`` fixture) is not installed
 pytest.importorskip('playwright')
+pytest.importorskip('pytest_playwright')
 
 from playwright.sync_api import Page, expect
 

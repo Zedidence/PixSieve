@@ -365,22 +365,35 @@ class TestBackgroundWriterShutdown:
 
         assert elapsed < 1.0
 
-    def test_connection_manager_registers_and_unregisters_atexit_hook(self, temp_cache_db):
+    def test_connection_manager_registers_and_unregisters_atexit_hook(
+        self, temp_cache_db, monkeypatch
+    ):
         """ConnectionManager should register its writer's close() with atexit
         on creation, and remove that registration once explicitly cleaned up
         via __del__ - otherwise every instance created during a long-running
         process (or a large test suite) would be kept alive by atexit's
-        internal reference forever."""
-        before = atexit._ncallbacks()
+        internal reference forever.
+
+        Tracks registrations directly rather than via atexit._ncallbacks():
+        CPython's unregister() only clears the callback's slot, so that
+        private counter never decreases."""
+        registered = []
+
+        def fake_unregister(fn):
+            registered[:] = [cb for cb in registered if cb != fn]
+
+        monkeypatch.setattr(atexit, "register", registered.append)
+        monkeypatch.setattr(atexit, "unregister", fake_unregister)
+
         mgr = ConnectionManager(temp_cache_db)
-        assert atexit._ncallbacks() == before + 1
+        assert registered == [mgr._bg_writer.close]
 
         mgr.__del__()  # simulate GC-triggered cleanup
-        assert atexit._ncallbacks() == before
+        assert registered == []
 
         # A second __del__ (which real GC won't normally trigger, but the
         # method must tolerate) should not raise or hang.
         start = time.monotonic()
         mgr.__del__()
         assert time.monotonic() - start < 1.0
-        assert atexit._ncallbacks() == before
+        assert registered == []
