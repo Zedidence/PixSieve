@@ -422,7 +422,7 @@ POST /api/operations/sort/resolution
 
 ### Output Folders
 
-Creates `sorted_by_resolution/<category>/<orientation>/`, where:
+Creates `<category>/<orientation>/` folders directly inside the target directory, where:
 
 **Category** (based on the longer edge):
 

@@ -208,7 +208,7 @@ class TestSortByResolution:
         stats = sort_by_resolution(temp_dir, dry_run=False, include_videos=True)
         assert stats['processed'] == 1
         assert not clip.exists()
-        assert (temp_dir / "sorted_by_resolution" / "medium" / "landscape" / "clip.mp4").exists()
+        assert (temp_dir / "medium" / "landscape" / "clip.mp4").exists()
 
 
 class TestColorImageSorterVideoSupport:

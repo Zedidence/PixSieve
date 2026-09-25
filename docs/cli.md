@@ -314,7 +314,7 @@ python -m pixsieve cli pipeline /path/to/photos \
 
 Two operations exist in `pixsieve.operations` and the REST API but have no CLI subcommand:
 
-- **Sort by resolution** (`sort_by_resolution()` / `POST /api/operations/sort/resolution`) — sorts images into `sorted_by_resolution/<category>/<orientation>/` folders by resolution tier (tiny → 8k+) and orientation (landscape/portrait/square).
+- **Sort by resolution** (`sort_by_resolution()` / `POST /api/operations/sort/resolution`) — sorts images into `<category>/<orientation>/` folders (created directly inside the target directory) by resolution tier (tiny → 8k+) and orientation (landscape/portrait/square).
 - **Repair corrupt images** (`scan_and_repair()` / `POST /api/operations/repair`) — scans for corrupt/unreadable images, attempts repair (re-encode → strip EXIF → convert to PNG), and quarantines files it can't fix. Available from the CLI only indirectly, as the `repair_corrupt` pipeline step (see [pipeline](#pipeline)).
 
 See [operations.md](operations.md) for full details on both.

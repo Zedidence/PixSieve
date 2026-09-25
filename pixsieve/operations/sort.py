@@ -602,8 +602,8 @@ def sort_by_resolution(
     """
     Sort images into subfolders by resolution category and orientation.
 
-    Creates a ``sorted_by_resolution/`` folder inside *directory* with the
-    structure: ``<category>/<orientation>/<filename>``.
+    Creates folders directly inside *directory* with the structure:
+    ``<category>/<orientation>/<filename>``.
 
     Resolution categories (based on the longer edge):
         tiny       : < 100 px
@@ -649,10 +649,6 @@ def sort_by_resolution(
     stats: dict = {'processed': 0, 'skipped': 0, 'errors': 0}
     category_stats: dict[str, int] = {}
 
-    base = source_dir / 'sorted_by_resolution'
-    if not dry_run:
-        base.mkdir(exist_ok=True)
-
     for i, fp in enumerate(make_progress_bar(image_files, desc="Sorting by resolution"), 1):
         if on_progress and total > 0:
             pct = int((i - 1) / total * 100)
@@ -672,7 +668,7 @@ def sort_by_resolution(
         category = _get_resolution_category(width, height)
         orientation = _get_orientation(width, height)
 
-        dest_folder = base / category / orientation
+        dest_folder = source_dir / category / orientation
         folder_key = f"{category}/{orientation}"
 
         if not dry_run:
