@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import random
+import re
 import string
 import logging
 from pathlib import Path
@@ -179,6 +180,8 @@ def rename_by_parent(
 
     Notes:
         - Produces names like: FolderName_SubFolder_1.jpg
+        - Files already matching the naming convention (any index number)
+          are left untouched and counted as skipped
         - Handles Windows path length limits
         - Sanitizes filenames for Windows compatibility
         - Resolves naming conflicts automatically
@@ -228,13 +231,42 @@ def rename_by_parent(
                 stats['errors'] += 1
                 continue
 
-            index = 1
+            # Files whose stem already matches the naming convention
+            # (SafeName[_SafeSub]_<number>) are left alone, regardless of
+            # what number they carry — they don't need to be touched, and
+            # renaming them by list position was the source of spurious
+            # renames when a correctly-named file wasn't first alphabetically.
+            if safe_sub:
+                already_named_re = re.compile(
+                    rf"^{re.escape(safe_name)}_{re.escape(safe_sub)}_(\d+)$",
+                    re.IGNORECASE,
+                )
+            else:
+                already_named_re = re.compile(
+                    rf"^{re.escape(safe_name)}_(\d+)$", re.IGNORECASE
+                )
+
+            used_indices: set[int] = set()
+            to_rename: list[Path] = []
             for filename in filenames:
                 file_path = target_dir / filename
                 if not file_path.is_file():
                     continue
 
+                match = already_named_re.match(file_path.stem)
+                if match:
+                    used_indices.add(int(match.group(1)))
+                    stats['skipped'] += 1
+                else:
+                    to_rename.append(file_path)
+
+            index = 1
+            for file_path in to_rename:
+                filename = file_path.name
                 ext = file_path.suffix
+
+                while index in used_indices:
+                    index += 1
 
                 # Generate new name
                 if safe_sub:
@@ -251,12 +283,6 @@ def rename_by_parent(
                     continue
 
                 new_path = Path(new_path_str)
-
-                # Skip if already correctly named
-                if file_path.resolve() == new_path.resolve():
-                    stats['skipped'] += 1
-                    index += 1
-                    continue
 
                 # Resolve naming conflicts
                 counter = 1
@@ -278,6 +304,8 @@ def rename_by_parent(
                     stats['errors'] += 1
                     index += 1
                     continue
+
+                used_indices.add(index)
 
                 if dry_run:
                     logger.info(f"[DRY RUN] {filename} -> {new_path.name}")

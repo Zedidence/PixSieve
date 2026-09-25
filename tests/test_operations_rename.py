@@ -124,3 +124,57 @@ class TestRenameByParent:
         stats = rename_by_parent(temp_dir / "nonexistent")
         assert stats['renamed'] == 0
         assert stats['errors'] == 0
+
+    def test_skips_already_named_file(self, temp_dir):
+        """A file already following the naming convention is left alone."""
+        artist = temp_dir / "ArtistA"
+        album = artist / "AlbumX"
+        album.mkdir(parents=True)
+        (album / "ArtistA_AlbumX_1.jpg").write_text("data")
+        (album / "new_photo.jpg").write_text("data")
+
+        stats = rename_by_parent(temp_dir, dry_run=False)
+
+        assert stats['skipped'] == 1
+        assert stats['renamed'] == 1
+        # Already-correct file untouched, no "_1" suffix appended to it
+        assert (album / "ArtistA_AlbumX_1.jpg").exists()
+        # The new file got a distinct index, not colliding with index 1
+        renamed = list(album.glob("ArtistA_AlbumX_*.jpg"))
+        assert len(renamed) == 2
+        new_names = {p.name for p in renamed}
+        assert "ArtistA_AlbumX_1.jpg" in new_names
+        assert "ArtistA_AlbumX_1_1.jpg" not in new_names
+
+    def test_skips_already_named_file_not_first_alphabetically(self, temp_dir):
+        """Correctly-named file isn't first alphabetically but is still skipped."""
+        artist = temp_dir / "ArtistA"
+        album = artist / "AlbumX"
+        album.mkdir(parents=True)
+        # "aaa_new.jpg" sorts before "ArtistA_AlbumX_1.jpg" alphabetically,
+        # so it would previously have claimed index 1 for itself.
+        (album / "aaa_new.jpg").write_text("data")
+        (album / "ArtistA_AlbumX_1.jpg").write_text("data")
+
+        stats = rename_by_parent(temp_dir, dry_run=False)
+
+        assert stats['skipped'] == 1
+        assert stats['renamed'] == 1
+        assert (album / "ArtistA_AlbumX_1.jpg").exists()
+        renamed = list(album.glob("ArtistA_AlbumX_*.jpg"))
+        new_names = {p.name for p in renamed}
+        assert "ArtistA_AlbumX_1_1.jpg" not in new_names
+
+    def test_skips_already_named_file_case_insensitive(self, temp_dir):
+        """Existing correct name is recognized regardless of case."""
+        artist = temp_dir / "ArtistA"
+        album = artist / "AlbumX"
+        album.mkdir(parents=True)
+        (album / "artista_albumx_1.jpg").write_text("data")
+        (album / "new_photo.jpg").write_text("data")
+
+        stats = rename_by_parent(temp_dir, dry_run=False)
+
+        assert stats['skipped'] == 1
+        assert stats['renamed'] == 1
+        assert (album / "artista_albumx_1.jpg").exists()
