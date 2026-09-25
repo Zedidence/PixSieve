@@ -4,6 +4,8 @@ lets directory-walking and image analysis overlap, plus the worker-scaling,
 resolve_symlinks, and calculate_phash wiring introduced alongside it.
 """
 
+import os
+
 import pytest
 
 from pixsieve.state import ScanState
@@ -42,9 +44,15 @@ class TestDiscoverAndAnalyzeIntegration:
         assert scan_state.status == 'complete'
         assert scan_state.total_files >= 5
         exact_groups = [g for g in scan_state.groups if g.match_type == 'exact']
-        identical_paths = {sample_images['identical1'], sample_images['identical2']}
+        # Discovery resolves symlinks by default, so compare canonical paths -
+        # the raw temp path differs on macOS (/var -> /private/var) and on
+        # Windows runners (8.3 short names like RUNNER~1).
+        identical_paths = {
+            os.path.realpath(sample_images['identical1']),
+            os.path.realpath(sample_images['identical2']),
+        }
         assert any(
-            identical_paths <= {img.path for img in g.images}
+            identical_paths <= {os.path.realpath(img.path) for img in g.images}
             for g in exact_groups
         )
 

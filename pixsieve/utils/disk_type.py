@@ -21,6 +21,7 @@ during a run.
 from __future__ import annotations
 
 import logging
+import ntpath
 import os
 import platform as platform_module
 import re
@@ -101,7 +102,9 @@ def tailor_workers(path: str, default_workers: int, hdd_cap: int) -> int:
 
 
 def _detect_windows(path: str) -> str:
-    drive, _ = os.path.splitdrive(path)
+    # ntpath rather than os.path: only ntpath parses drive letters, and this
+    # must behave the same wherever it runs (e.g. its tests on Linux/macOS CI).
+    drive, _ = ntpath.splitdrive(path)
     drive_letter = drive.rstrip(':').upper()
     if not drive_letter:
         return 'unknown'
