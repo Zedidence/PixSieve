@@ -176,10 +176,11 @@ class TestColorImageSorterSortByColorBW:
 class TestSortByResolution:
     """Test sort_by_resolution function."""
 
-    def test_default_excludes_video(self, temp_dir, make_video_clip):
+    def test_default_excludes_video(self, temp_dir):
         """Without include_videos, video files are ignored entirely."""
         Image.new('RGB', (1920, 1080), 'red').save(temp_dir / "photo.jpg", 'JPEG')
-        make_video_clip(temp_dir / "clip.mp4")
+        # Excluded by extension, never opened - no real video (or OpenCV) needed
+        (temp_dir / "clip.mp4").write_bytes(b"not a real video")
 
         stats = sort_by_resolution(temp_dir, dry_run=True)
         assert stats['processed'] == 1  # only the image
@@ -224,8 +225,9 @@ class TestColorImageSorterVideoSupport:
         names = {f.name for f in sorter.get_image_files()}
         assert 'clip.mp4' in names
 
-    def test_get_image_files_excludes_video_by_default(self, temp_dir, make_video_clip):
-        make_video_clip(temp_dir / "clip.mp4")
+    def test_get_image_files_excludes_video_by_default(self, temp_dir):
+        # Excluded by extension, never opened - no real video (or OpenCV) needed
+        (temp_dir / "clip.mp4").write_bytes(b"not a real video")
         sorter = ColorImageSorter(temp_dir)
         names = {f.name for f in sorter.get_image_files()}
         assert 'clip.mp4' not in names
