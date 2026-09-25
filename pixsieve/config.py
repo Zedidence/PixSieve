@@ -86,7 +86,9 @@ FORMAT_QUALITY_RANK = {
 }
 
 # Default similarity threshold for perceptual hashing
-# Lower = stricter matching (0-64 range)
+# Lower = stricter matching. This is a Hamming distance over the full
+# 256-bit pHash (hash_size=16 in scanner/hashing.py), not the 0-64 range
+# of an 8x8 hash - see lsh.py's calculate_optimal_params(hash_bits=256).
 # Recommended: 5-15
 DEFAULT_THRESHOLD = 10
 
