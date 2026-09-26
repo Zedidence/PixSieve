@@ -240,7 +240,8 @@ class TestFloorCeiling:
         assert d.floor == 1
         assert d.ceiling <= config.HDD_ANALYSIS_WORKERS
 
-    def test_scan_ceiling_never_above_legacy(self, auto):
+    def test_scan_ceiling_never_above_legacy(self, auto, monkeypatch):
+        monkeypatch.setattr(worker_policy.os, 'cpu_count', lambda: 8)
         auto['/nvme'] = PROFILES[Tier.NVME]
         d = resolve_workers(OpKind.SCAN, ['/nvme'], legacy_default=8)
         assert d.workers == 8

@@ -146,9 +146,21 @@ class _Reader:
 
 
 class TestProbeDevice:
+    @pytest.fixture(autouse=True)
+    def _roomy_timing(self, monkeypatch):
+        """
+        The fake readers emulate latency with time.sleep(), which is coarse on
+        some platforms (~15.6ms ticks on Windows before Python 3.11, overshoot
+        on macOS CI runners). A longer phase and smaller zones keep enough
+        samples per phase for the probe to report a result.
+        """
+        monkeypatch.setattr(io_probe, '_PHASE_MS', 400)
+        monkeypatch.setattr(io_probe, '_ZONE', 16 * 1024)
+        monkeypatch.setattr(io_probe, '_MIN_READ_FILE', 32 * 1024)
+
     def test_serial_device_shows_no_concurrency_gain(self, big_files):
         result = io_probe.probe_device(big_files, reader=_Reader(0.003, serial=True),
-                                       budget_ms=2000, hard_timeout_ms=5000)
+                                       budget_ms=3000, hard_timeout_ms=8000)
         assert result is not None
         assert result.concurrency_gain < 2.0
         assert result.mean_read_ms >= 2.5
@@ -156,18 +168,18 @@ class TestProbeDevice:
 
     def test_parallel_device_shows_concurrency_gain(self, big_files):
         result = io_probe.probe_device(big_files, reader=_Reader(0.003, serial=False),
-                                       budget_ms=2000, hard_timeout_ms=5000)
+                                       budget_ms=3000, hard_timeout_ms=8000)
         assert result is not None
         assert result.concurrency_gain > 2.0
 
     def test_prepare_called_outside_timing(self, big_files):
         reader = _Reader(0.001, serial=False)
-        io_probe.probe_device(big_files, reader=reader, budget_ms=2000, hard_timeout_ms=5000)
+        io_probe.probe_device(big_files, reader=reader, budget_ms=3000, hard_timeout_ms=8000)
         assert reader.prepared == 1 + io_probe._CONCURRENCY
 
     def test_instant_reads_are_flagged_as_cached(self, big_files):
         result = io_probe.probe_device(big_files, reader=lambda p, o, s: s,
-                                       budget_ms=2000, hard_timeout_ms=5000)
+                                       budget_ms=3000, hard_timeout_ms=8000)
         assert result is not None
         assert result.cached_suspect
 
