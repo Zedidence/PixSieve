@@ -11,8 +11,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ..config import DEFAULT_THRESHOLD, DEFAULT_WORKERS
+from ..config import DEFAULT_THRESHOLD
 from ..operations.capabilities import OPERATION_VIDEO_SUPPORT, needs_video_flag
+from ..utils.disk_type import OVERRIDE_SPEC_NAMES
+from ..utils.worker_policy import parse_storage_overrides
 
 
 def _bounded_int(min_val: int, max_val: int):
@@ -31,6 +33,68 @@ def _bounded_int(min_val: int, max_val: int):
             )
         return ivalue
     return _parse
+
+
+def _workers_arg(max_val: int):
+    """`type=` for -w/--workers: an integer in range, or 'auto' (None)."""
+    bounded = _bounded_int(1, max_val)
+
+    def _parse(value: str):
+        if value.strip().lower() == 'auto':
+            return None
+        return bounded(value)
+    return _parse
+
+
+def _storage_profile_arg(value: str) -> str:
+    """`type=` for --storage-profile: validate '[PATH=]TYPE' up front."""
+    try:
+        parse_storage_overrides([value])
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e))
+    return value
+
+
+def _add_storage_profile_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        '--storage-profile',
+        action='append',
+        type=_storage_profile_arg,
+        metavar='[PATH=]TYPE',
+        help=(
+            'Override drive detection when it gets a drive wrong, e.g. "usb-hdd" '
+            '(all paths) or "E:=usb-ssd". Repeatable. '
+            f'Types: {", ".join(OVERRIDE_SPEC_NAMES)}'
+        ),
+    )
+
+
+def _add_worker_args(parser: argparse.ArgumentParser, max_workers: int = 32) -> None:
+    """Add -w/--workers (default: auto), --storage-profile and --no-io-probe."""
+    parser.add_argument(
+        '-w', '--workers',
+        type=_workers_arg(max_workers),
+        default=None,
+        metavar='N',
+        help=(
+            f'Number of parallel workers (1-{max_workers}, or "auto"). Default: auto - '
+            'chosen from the drive type (HDD/SSD/NVMe) and connection (SATA/USB/network)'
+        ),
+    )
+    _add_storage_profile_arg(parser)
+    parser.add_argument(
+        '--no-io-probe',
+        action='store_true',
+        help='Skip the short read-only speed test used to classify ambiguous (e.g. USB) drives',
+    )
+
+
+def storage_options(args: argparse.Namespace) -> dict:
+    """resolve_workers() keyword arguments from the storage-related CLI flags."""
+    return {
+        'overrides': parse_storage_overrides(getattr(args, 'storage_profile', None) or []),
+        'allow_probe': not getattr(args, 'no_io_probe', False),
+    }
 
 
 def _add_include_videos_arg(parser: argparse.ArgumentParser, op_name: str) -> None:
@@ -216,12 +280,7 @@ Platform Notes:
     )
 
     # Performance
-    dup.add_argument(
-        '-w', '--workers',
-        type=_bounded_int(1, 32),
-        default=DEFAULT_WORKERS,
-        help=f'Number of parallel workers (1-32). Default: {DEFAULT_WORKERS}'
-    )
+    _add_worker_args(dup, 32)
 
     # Export
     dup.add_argument(
@@ -268,6 +327,7 @@ def _build_move_to_parent_parser(subparsers) -> None:
         help='Only move files with these extensions (e.g., .jpg .png)'
     )
     _add_include_videos_arg(p, 'move-to-parent')
+    _add_worker_args(p, 32)
 
 
 def _build_move_parser(subparsers) -> None:
@@ -287,6 +347,8 @@ def _build_move_parser(subparsers) -> None:
         action='store_true',
         help='Overwrite existing files at destination'
     )
+    _add_include_videos_arg(p, 'move')
+    _add_worker_args(p, 32)
 
 
 def _build_rename_parser(subparsers) -> None:
@@ -308,12 +370,7 @@ def _build_rename_parser(subparsers) -> None:
         default=12,
         help='Length of random name (4-64). Default: 12'
     )
-    rr.add_argument(
-        '-w', '--workers',
-        type=_bounded_int(1, 16),
-        default=4,
-        help='Number of parallel workers (1-16). Default: 4'
-    )
+    _add_worker_args(rr, 16)
     rr.add_argument(
         '--extensions',
         nargs='+',
@@ -324,6 +381,7 @@ def _build_rename_parser(subparsers) -> None:
     # rename parent
     rp = rename_sub.add_parser('parent', help='Rename based on parent folder name')
     _add_common_args(rp)
+    _add_include_videos_arg(rp, 'rename-parent')
 
 
 def _build_sort_parser(subparsers) -> None:
@@ -338,6 +396,7 @@ def _build_sort_parser(subparsers) -> None:
     # sort alpha
     sa = sort_sub.add_parser('alpha', help='Sort alphabetically into A-G, H-N, O-T, U-Z, 0-9')
     _add_common_args(sa)
+    _add_include_videos_arg(sa, 'sort-alpha')
 
     # sort color
     sc = sort_sub.add_parser('color', help='Sort images by color properties')
@@ -425,6 +484,7 @@ def _build_metadata_parser(subparsers) -> None:
         help='Skip EXIF date update; only update filesystem timestamps'
     )
     _add_include_videos_arg(md, 'randomize-dates')
+    _add_worker_args(md, 32)
 
 
 def _build_cleanup_parser(subparsers) -> None:
@@ -490,6 +550,23 @@ def _build_pipeline_parser(subparsers) -> None:
         help='Delete originals after conversion (for convert_jpg step)'
     )
     _add_include_videos_arg(p, 'pipeline')
+    _add_worker_args(p, 16)
+
+
+def _build_storage_parser(subparsers) -> None:
+    """Build the 'storage' subcommand."""
+    p = subparsers.add_parser(
+        'storage',
+        help='Show the detected drive type for paths and the worker counts PixSieve would use'
+    )
+    p.add_argument('paths', nargs='+', type=Path, help='Paths to inspect')
+    _add_storage_profile_arg(p)
+    p.add_argument(
+        '--probe',
+        action='store_true',
+        help='Also run the read-only speed test on files under each path',
+    )
+    p.add_argument('--json', action='store_true', help='Print the result as JSON')
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -516,6 +593,7 @@ Commands:
   cleanup          Delete empty folders
   strip-ratings    Remove 5-star/favorite rating tags (requires exiftool)
   pipeline         Run multi-step workflow
+  storage          Show detected drive types and worker counts
 
 Examples:
   %(prog)s /path/to/photos
@@ -551,6 +629,7 @@ Examples:
     _build_cleanup_parser(subparsers)
     _build_strip_ratings_parser(subparsers)
     _build_pipeline_parser(subparsers)
+    _build_storage_parser(subparsers)
 
     return parser
 
@@ -558,6 +637,7 @@ Examples:
 _VALID_COMMANDS = {
     'duplicates', 'move-to-parent', 'move', 'rename', 'sort',
     'fix-extensions', 'convert', 'metadata', 'cleanup', 'strip-ratings', 'pipeline',
+    'storage',
 }
 
 
@@ -605,7 +685,9 @@ def parse_arguments(argv=None) -> argparse.Namespace:
             action='report',
             trash_dir=None,
             no_dry_run=False,
-            workers=DEFAULT_WORKERS,
+            workers=None,
+            storage_profile=None,
+            no_io_probe=False,
             export=None,
             export_format='txt',
             verbose=False,

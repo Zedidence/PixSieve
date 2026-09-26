@@ -63,9 +63,11 @@ class ImageCache:
         """Cache an ImageInfo object."""
         return self._operations.put(info)
 
-    def get_batch(self, filepaths: list[str]) -> dict[str, Optional[ImageInfo]]:
+    def get_batch(
+        self, filepaths: list[str], max_workers: Optional[int] = None,
+    ) -> dict[str, Optional[ImageInfo]]:
         """Get cached info for multiple files efficiently."""
-        return self._operations.get_batch(filepaths)
+        return self._operations.get_batch(filepaths, max_workers=max_workers)
 
     def put_batch(self, images: list[ImageInfo]) -> int:
         """Cache multiple ImageInfo objects efficiently."""

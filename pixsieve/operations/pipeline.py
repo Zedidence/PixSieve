@@ -9,13 +9,16 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from pathlib import Path
+from typing import Mapping
 
 from .rename import rename_random
 from .convert import batch_convert_to_jpg
 from .metadata import randomize_dates
 from .cleanup import delete_empty_folders
 from .repair import scan_and_repair
-from ..config import IMAGE_EXTENSIONS, resolve_extensions
+from ..config import DEFAULT_OP_WORKERS, IMAGE_EXTENSIONS, resolve_extensions
+from ..utils.adaptive import make_tuner
+from ..utils.worker_policy import OpKind, resolve_workers
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +59,8 @@ def run_pipeline(
     dry_run: bool = False,
     trash_dir: str | None = None,
     include_videos: bool = False,
+    workers: int | None = None,
+    storage_overrides: Mapping[str, str] | None = None,
 ) -> dict[str, dict]:
     """
     Execute a sequence of operations on directory.
@@ -76,6 +81,10 @@ def run_pipeline(
             ('random_rename', 'randomize_dates' - filesystem dates only for
             the latter). Has no effect on 'convert_jpg' or 'repair_corrupt',
             which do not support video.
+        workers: Explicit worker count for every parallel step; None picks
+            one per step from the drive type (utils/worker_policy.py).
+        storage_overrides: {path_prefix: spec} drive classification
+            overrides (see worker_policy.parse_storage_overrides()).
 
     Returns:
         Dictionary mapping step names to their result dictionaries
@@ -129,6 +138,14 @@ def run_pipeline(
     results: dict[str, dict] = {}
     total = len(steps)
 
+    def _decide(op: OpKind, destination: str | None = None, upper: int = 32):
+        decision = resolve_workers(
+            op, [str(directory)], legacy_default=DEFAULT_OP_WORKERS, requested=workers,
+            destination=destination, overrides=storage_overrides, upper=upper,
+        )
+        logger.info(f"Workers: {decision.reason}")
+        return decision
+
     for i, step in enumerate(steps, 1):
         label = AVAILABLE_STEPS[step]['label']
         print(f"\n[STEP {i}/{total}] {label}")
@@ -141,6 +158,7 @@ def run_pipeline(
                 extensions=resolve_extensions(IMAGE_EXTENSIONS, include_videos),
                 recursive=recursive,
                 dry_run=dry_run,
+                workers=_decide(OpKind.METADATA, upper=16).workers,
             )
 
         elif step == 'convert_jpg':
@@ -153,6 +171,7 @@ def run_pipeline(
             )
 
         elif step == 'randomize_dates':
+            decision = _decide(OpKind.REWRITE)
             results[step] = randomize_dates(
                 directory,
                 start_date,
@@ -160,6 +179,8 @@ def run_pipeline(
                 recursive=recursive,
                 dry_run=dry_run,
                 extensions=resolve_extensions(IMAGE_EXTENSIONS, include_videos),
+                max_workers=decision.workers,
+                tuner=make_tuner(decision, None),
             )
 
         elif step == 'cleanup_empty':
@@ -170,6 +191,7 @@ def run_pipeline(
                 str(directory),
                 trash_folder=trash_dir,
                 dry_run=dry_run,
+                max_workers=_decide(OpKind.REPAIR, destination=trash_dir, upper=16).workers,
             )
             # Strip the per-file results list from the summary to keep output readable
             summary = {k: v for k, v in step_result.items() if k != 'results'}

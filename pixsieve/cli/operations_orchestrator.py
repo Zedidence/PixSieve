@@ -7,12 +7,21 @@ handles dry-run mode, logging, and result reporting.
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
 from pathlib import Path
 
-from ..config import IMAGE_EXTENSIONS, RATING_EXTENSIONS, HDD_WRITE_WORKERS, resolve_extensions
-from ..utils.disk_type import tailor_workers
+from ..config import (
+    DEFAULT_OP_WORKERS, DEFAULT_WORKERS, IMAGE_EXTENSIONS, RATING_EXTENSIONS,
+    resolve_extensions,
+)
+from ..utils import io_probe
+from ..utils.adaptive import make_tuner
+from ..utils.worker_policy import (
+    OpKind, WorkerDecision, parse_storage_overrides, profile_for, resolve_workers,
+)
+from .arg_parser import storage_options
 from ..operations import (
     delete_empty_folders,
     move_to_parent,
@@ -63,6 +72,7 @@ class OperationsOrchestrator:
             'cleanup': self._handle_cleanup,
             'strip-ratings': self._handle_ratings,
             'pipeline': self._handle_pipeline,
+            'storage': self._handle_storage,
         }
 
         handler = handlers.get(command)
@@ -81,6 +91,23 @@ class OperationsOrchestrator:
             self.logger.error(f"Not a directory: {self.args.directory}")
             return False
         return True
+
+    def _decide_workers(
+        self, op: OpKind, sources: list[str], *, destination: str | None = None, upper: int = 32,
+    ) -> WorkerDecision:
+        """Drive-aware worker count for this command (an explicit -w wins)."""
+        options = storage_options(self.args)
+        decision = resolve_workers(
+            op, sources, legacy_default=DEFAULT_OP_WORKERS,
+            requested=getattr(self.args, 'workers', None), destination=destination,
+            upper=upper, overrides=options['overrides'],
+        )
+        self.logger.info(f"Workers: {decision.reason}")
+        return decision
+
+    def _media_extensions(self) -> set[str]:
+        """Images, plus videos with --include-videos - the only files an operation may touch."""
+        return resolve_extensions(IMAGE_EXTENSIONS, getattr(self.args, 'include_videos', False))
 
     def _print_dry_run_banner(self) -> None:
         """Print dry-run mode notice."""
@@ -120,14 +147,13 @@ class OperationsOrchestrator:
         )
 
         self.logger.info(f"Moving files to parent: {self.args.directory}")
-        workers = tailor_workers(str(self.args.directory), 4, HDD_WRITE_WORKERS)
-        if workers != 4:
-            self.logger.info(f"HDD detected - using {workers} write workers instead of 4")
+        # Moving within one directory tree is a rename on the same volume
+        decision = self._decide_workers(OpKind.METADATA, [str(self.args.directory)])
         stats = move_to_parent(
             self.args.directory,
             extensions=extensions,
             dry_run=self.dry_run,
-            max_workers=workers,
+            max_workers=decision.workers,
         )
         self._print_stats(stats)
         return 0
@@ -138,16 +164,19 @@ class OperationsOrchestrator:
 
         self._print_dry_run_banner()
         self.logger.info(f"Moving files: {self.args.directory} -> {self.args.destination}")
-        # Tailor on the destination - that's where the actual writes land.
-        workers = tailor_workers(str(self.args.destination), 4, HDD_WRITE_WORKERS)
-        if workers != 4:
-            self.logger.info(f"HDD detected at destination - using {workers} write workers instead of 4")
+        # Sized on both ends: a same-volume move is a rename, a cross-volume
+        # one is bounded by the slower drive.
+        decision = self._decide_workers(
+            OpKind.COPY, [str(self.args.directory)], destination=str(self.args.destination),
+        )
         stats = move_with_structure(
             self.args.directory,
             self.args.destination,
             overwrite=getattr(self.args, 'overwrite', False),
             dry_run=self.dry_run,
-            max_workers=workers,
+            max_workers=decision.workers,
+            tuner=make_tuner(decision, None),
+            extensions=self._media_extensions(),
         )
         self._print_stats(stats)
         return 0
@@ -171,12 +200,7 @@ class OperationsOrchestrator:
             )
 
             self.logger.info(f"Random rename in: {self.args.directory}")
-            workers = getattr(self.args, 'workers', 4)
-            if workers == 4:
-                tailored = tailor_workers(str(self.args.directory), workers, HDD_WRITE_WORKERS)
-                if tailored != workers:
-                    self.logger.info(f"HDD detected - using {tailored} write workers instead of {workers}")
-                workers = tailored
+            workers = self._decide_workers(OpKind.METADATA, [str(self.args.directory)], upper=16).workers
             stats = rename_random(
                 self.args.directory,
                 name_length=getattr(self.args, 'length', 12),
@@ -190,6 +214,7 @@ class OperationsOrchestrator:
             stats = rename_by_parent(
                 self.args.directory,
                 dry_run=self.dry_run,
+                extensions=self._media_extensions(),
             )
         else:
             self.logger.error(f"Unknown rename mode: {mode}")
@@ -210,6 +235,7 @@ class OperationsOrchestrator:
             stats = sort_alphabetical(
                 self.args.directory,
                 dry_run=self.dry_run,
+                extensions=self._media_extensions(),
             )
         elif mode == 'color':
             method = getattr(self.args, 'method', 'dominant')
@@ -301,6 +327,7 @@ class OperationsOrchestrator:
 
         if mode == 'randomize-dates':
             self.logger.info(f"Randomizing dates in: {self.args.directory}")
+            decision = self._decide_workers(OpKind.REWRITE, [str(self.args.directory)])
             stats = randomize_dates(
                 self.args.directory,
                 start_date=start_date,
@@ -312,6 +339,8 @@ class OperationsOrchestrator:
                     IMAGE_EXTENSIONS,
                     getattr(self.args, 'include_videos', False),
                 ),
+                max_workers=decision.workers,
+                tuner=make_tuner(decision, None),
             )
         else:
             self.logger.error(f"Unknown metadata mode: {mode}")
@@ -393,6 +422,8 @@ class OperationsOrchestrator:
             recursive=not getattr(self.args, 'no_recursive', False),
             dry_run=self.dry_run,
             include_videos=getattr(self.args, 'include_videos', False),
+            workers=getattr(self.args, 'workers', None),
+            storage_overrides=storage_options(self.args)['overrides'],
         )
 
         print("\nPipeline Results:")
@@ -401,6 +432,58 @@ class OperationsOrchestrator:
             for key, value in step_stats.items():
                 print(f"    {key}: {value}")
 
+        return 0
+
+    def _handle_storage(self) -> int:
+        """Print what drive-aware tuning sees for each path, and the worker counts it would use."""
+        overrides = parse_storage_overrides(getattr(self.args, 'storage_profile', None) or [])
+        legacy = {OpKind.SCAN: DEFAULT_WORKERS, OpKind.STAT: 32}
+        report = []
+        for path in self.args.paths:
+            if not path.exists():
+                self.logger.error(f"Path not found: {path}")
+                return 1
+            profile = profile_for(str(path), overrides)
+            entry = {'path': str(path), 'drive': profile.as_dict(), 'workers': {}, 'probe': None}
+
+            if getattr(self.args, 'probe', False):
+                files = io_probe.sample_directory(str(path)) if path.is_dir() else [str(path)]
+                result = io_probe.probe_device(files) if files else None
+                entry['probe'] = result.as_dict() if result else {
+                    'error': 'not enough large files to measure (needs several >= 512 KiB), or timed out'
+                }
+
+            for op in OpKind:
+                decision = resolve_workers(
+                    op, [str(path)], legacy_default=legacy.get(op, DEFAULT_OP_WORKERS),
+                    overrides=overrides, allow_probe=False,
+                )
+                entry['workers'][op.value] = decision.workers
+            report.append(entry)
+
+        if getattr(self.args, 'json', False):
+            print(json.dumps(report, indent=2))
+            return 0
+
+        for entry in report:
+            drive = entry['drive']
+            print(f"\n{entry['path']}")
+            print(f"  Drive:   {drive['label']} (media: {drive['media']}, bus: {drive['bus']}, "
+                  f"{drive['source']})")
+            if drive['detail']:
+                print(f"  Detail:  {drive['detail']}")
+            print("  Workers: " + ' | '.join(f"{op} {n}" for op, n in entry['workers'].items()))
+            probe = entry['probe']
+            if probe and 'error' in probe:
+                print(f"  Probe:   {probe['error']}")
+            elif probe:
+                print(
+                    f"  Probe:   random 4K read {probe['mean_read_ms']:.2f} ms avg "
+                    f"({probe['read_latency_ms']:.2f} median), "
+                    f"{probe['rand_iops_qd1']:.0f} IOPS x1 -> {probe['rand_iops_qd8']:.0f} IOPS x8 "
+                    f"(gain {probe['concurrency_gain']:.1f}x), stat {probe['meta_latency_ms']:.2f} ms"
+                    + (' [served from cache - not representative]' if probe['cached_suspect'] else '')
+                )
         return 0
 
 

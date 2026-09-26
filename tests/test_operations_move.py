@@ -91,29 +91,29 @@ class TestMoveWithStructure:
         """Overwrite=False skips existing files at destination."""
         src = temp_dir / "src"
         src.mkdir()
-        (src / "file.txt").write_text("source")
+        (src / "file.jpg").write_text("source")
 
         dest = temp_dir / "dest"
         dest.mkdir()
-        (dest / "file.txt").write_text("existing")
+        (dest / "file.jpg").write_text("existing")
 
         stats = move_with_structure(src, dest, overwrite=False, dry_run=False)
         assert stats['skipped'] == 1
-        assert (dest / "file.txt").read_text() == "existing"
+        assert (dest / "file.jpg").read_text() == "existing"
 
     def test_overwrite_true_replaces(self, temp_dir):
         """Overwrite=True replaces existing files at destination."""
         src = temp_dir / "src"
         src.mkdir()
-        (src / "file.txt").write_text("source")
+        (src / "file.jpg").write_text("source")
 
         dest = temp_dir / "dest"
         dest.mkdir()
-        (dest / "file.txt").write_text("existing")
+        (dest / "file.jpg").write_text("existing")
 
         stats = move_with_structure(src, dest, overwrite=True, dry_run=False)
         assert stats['moved'] == 1
-        assert (dest / "file.txt").read_text() == "source"
+        assert (dest / "file.jpg").read_text() == "source"
 
     def test_invalid_source(self, temp_dir):
         """Invalid source returns zero stats."""

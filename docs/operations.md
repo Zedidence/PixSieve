@@ -2,6 +2,8 @@
 
 Complete reference for all media file operations available in PixSieve.
 
+**Operations only ever touch image files** (plus video files when `--include-videos` / `includeVideos` is set). Documents, archives, sidecar files (`.xmp`) and anything else in the folder are never renamed, moved, sorted or modified — even if listed in `--extensions`/`extensions`, which can only narrow the set of media types.
+
 Most operations are accessible via **CLI subcommands**, **Web GUI**, and **REST API**. Two ([Sort by Resolution](#sort-by-resolution) and [Repair Corrupt Images](#repair-corrupt-images)) are Web GUI / API only, with no dedicated CLI subcommand — repair is reachable from the CLI indirectly via the `repair_corrupt` [pipeline](#pipeline) step. Every operation defaults to **dry-run mode** for safety.
 
 ---
@@ -73,13 +75,13 @@ POST /api/operations/move-to-parent
 - Files already in the parent directory are skipped
 - Duplicate filenames get `_1`, `_2`, etc. appended
 - Preserves file extensions
-- Defaults to all image extensions if `--extensions` not specified
+- Defaults to all image extensions if `--extensions` not specified; non-image/video extensions in `--extensions` are ignored
 
 ---
 
 ## Move with Structure
 
-Move files from source to destination while preserving the directory structure.
+Move image files (and optionally videos) from source to destination while preserving the directory structure. Other files stay in the source.
 
 **Module:** `pixsieve.operations.move`
 **Function:** `move_with_structure()`
@@ -96,6 +98,7 @@ python -m pixsieve cli move /path/to/source /path/to/dest --overwrite --no-dry-r
 | `directory` | Source directory (required) |
 | `destination` | Destination directory (required) |
 | `--overwrite` | Overwrite existing files at destination |
+| `--include-videos` | Also process video files (mp4, mov, avi, mkv, etc) |
 | `--dry-run` | Simulate without changes (default) |
 | `--no-dry-run` | Actually perform the operation |
 
@@ -110,6 +113,7 @@ POST /api/operations/move
   "directory": "/path/to/source",
   "destination": "/path/to/dest",
   "overwrite": false,
+  "includeVideos": false,
   "dryRun": true
 }
 ```
@@ -124,8 +128,8 @@ POST /api/operations/move
 
 ### Notes
 
-- Automatically creates necessary directories in destination
-- Cleans up empty source directories after moving (unless dry-run)
+- Creates destination directories only for folders that contain files being moved (nothing is created in dry-run)
+- Cleans up source directories left empty after moving (unless dry-run); folders still holding other files are kept
 - If `overwrite=false`, existing destination files are skipped
 
 ---
@@ -149,7 +153,7 @@ python -m pixsieve cli rename random /path/to/photos --extensions .jpg .png --no
 |--------|-------------|
 | `directory` | Target directory (required) |
 | `--length` | Length of random name (default: 12) |
-| `-w, --workers` | Number of parallel workers (default: 4) |
+| `-w, --workers` | Number of parallel workers (1–16, or `auto`). Default: `auto` — chosen from the drive type |
 | `--extensions` | Only rename files with these extensions |
 | `--no-recursive` | Do not process subdirectories |
 | `--dry-run` | Simulate without changes (default) |
@@ -165,7 +169,7 @@ POST /api/operations/rename/random
 {
   "directory": "/path/to/photos",
   "nameLength": 16,
-  "workers": 4,
+  "workers": null,
   "extensions": [".jpg", ".png"],
   "recursive": true,
   "dryRun": true
@@ -191,7 +195,7 @@ POST /api/operations/rename/random
 
 ## Rename by Parent
 
-Rename files based on parent and grandparent folder names, producing structured names like `ArtistA_AlbumX_1.jpg`.
+Rename image files (and optionally videos) based on parent and grandparent folder names, producing structured names like `ArtistA_AlbumX_1.jpg`. Other files are left alone.
 
 **Module:** `pixsieve.operations.rename`
 **Function:** `rename_by_parent()`
@@ -206,6 +210,7 @@ python -m pixsieve cli rename parent /path/to/photos --no-dry-run
 | Option | Description |
 |--------|-------------|
 | `directory` | Target directory (required) |
+| `--include-videos` | Also process video files (mp4, mov, avi, mkv, etc) |
 | `--dry-run` | Simulate without changes (default) |
 | `--no-dry-run` | Actually perform the operation |
 
@@ -218,6 +223,7 @@ POST /api/operations/rename/parent
 ```json
 {
   "directory": "/path/to/photos",
+  "includeVideos": false,
   "dryRun": true
 }
 ```
@@ -255,7 +261,7 @@ root_dir/
 
 ## Sort Alphabetical
 
-Sort files into subfolders based on the first character of their filename.
+Sort image files (and optionally videos) into subfolders based on the first character of their filename. Other files stay where they are.
 
 **Module:** `pixsieve.operations.sort`
 **Function:** `sort_alphabetical()`
@@ -270,6 +276,7 @@ python -m pixsieve cli sort alpha /path/to/photos --no-dry-run
 | Option | Description |
 |--------|-------------|
 | `directory` | Target directory (required) |
+| `--include-videos` | Also process video files (mp4, mov, avi, mkv, etc) |
 | `--dry-run` | Simulate without changes (default) |
 | `--no-dry-run` | Actually perform the operation |
 
@@ -282,6 +289,7 @@ POST /api/operations/sort/alpha
 ```json
 {
   "directory": "/path/to/photos",
+  "includeVideos": false,
   "dryRun": true
 }
 ```
@@ -628,7 +636,7 @@ There is also `POST /api/operations/metadata/randomize-dates-per-folder`, which 
 
 - Filesystem timestamps are set for all image formats; EXIF writing is limited to `.jpg`, `.jpeg`, `.tiff`, `.tif` and requires `piexif`
 - On Windows, also sets `ctime` (creation time) if `pywin32` is installed; gracefully degrades if not
-- Each file gets a unique random date within the range, processed in parallel (`max_workers`, default 4)
+- Each file gets a unique random date within the range, processed in parallel (`max_workers`; the CLI and API pick it from the drive type unless `-w`/`workers` is given)
 
 ---
 
@@ -712,7 +720,7 @@ POST /api/operations/repair
   "trashFolder": "/path/to/photos/.trash",
   "attemptRepair": true,
   "quarantineUnfixable": true,
-  "workers": 4,
+  "workers": null,
   "dryRun": true
 }
 ```

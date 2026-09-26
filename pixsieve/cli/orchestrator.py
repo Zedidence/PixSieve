@@ -24,14 +24,15 @@ from ..scanner import (
 )
 from ..config import (
     DEFAULT_WORKERS, LARGE_LIBRARY_THRESHOLD, LARGE_LIBRARY_WORKERS,
-    HDD_ANALYSIS_WORKERS, VIDEO_EXTENSIONS,
+    VIDEO_EXTENSIONS,
 )
 from ..models import format_size
 from ..utils.exporters import export_results
 from ..utils.platform import check_symlink_support
-from ..utils.disk_type import tailor_workers
+from ..utils.adaptive import make_tuner
+from ..utils.worker_policy import OpKind, resolve_workers, warm_up
 from ..utils.selection import resolve_group_selections, stamp_group_selections
-from .arg_parser import parse_arguments
+from .arg_parser import parse_arguments, storage_options
 from .interactive import prompt_for_directories, confirm_action
 from .reporting import print_duplicate_report
 from .actions import handle_duplicates
@@ -42,7 +43,7 @@ from .operations_orchestrator import OperationsOrchestrator
 OPERATIONS_COMMANDS = {
     'move-to-parent', 'move', 'rename', 'sort',
     'fix-extensions', 'convert', 'metadata',
-    'cleanup', 'strip-ratings', 'pipeline',
+    'cleanup', 'strip-ratings', 'pipeline', 'storage',
 }
 
 
@@ -290,6 +291,10 @@ class CLIOrchestrator:
         """
         dir_list = ', '.join(str(d) for d in self.args.directory)
         self.logger.info(f"Scanning {dir_list} for images...")
+        if self.args.workers is None:
+            # Overlap drive detection (PowerShell alone is ~1s on Windows)
+            # with file discovery; the analysis phase picks up the result.
+            warm_up(str(d) for d in self.args.directory)
         if self.show_progress:
             print("Scanning for image files...", end=" ", flush=True)
 
@@ -335,35 +340,30 @@ class CLIOrchestrator:
         Returns:
             0 for success
         """
-        # Scale up workers for very large libraries, matching the
-        # already-materialized-count case where we can make this decision
-        # up front. Only applied when the user hasn't explicitly overridden
-        # --workers, so an explicit choice (e.g. deliberately throttling
-        # concurrency on a slow external drive) is never silently overridden.
-        effective_workers = self.args.workers
-        if len(self.image_files) >= LARGE_LIBRARY_THRESHOLD and self.args.workers == DEFAULT_WORKERS:
-            effective_workers = LARGE_LIBRARY_WORKERS
-            self.logger.info(
-                f"Large library ({len(self.image_files):,} files >= {LARGE_LIBRARY_THRESHOLD:,}) - "
-                f"scaling workers {self.args.workers} -> {effective_workers}"
-            )
-
-        # HDD tailoring: only when the user hasn't explicitly chosen --workers
-        # (same "explicit choice is never overridden" rule as the large-library
-        # scaling above). A confirmed rotational drive gets capped down to
-        # avoid seek thrashing; SSDs and unconfirmed/unknown media are untouched.
-        if self.args.workers == DEFAULT_WORKERS:
-            primary_dir = str(self.args.directory[0])
-            tailored = tailor_workers(primary_dir, effective_workers, HDD_ANALYSIS_WORKERS)
-            if tailored != effective_workers:
-                self.logger.info(
-                    f"HDD detected at {primary_dir} - reducing workers "
-                    f"{effective_workers} -> {tailored} to avoid seek thrashing"
-                )
-                effective_workers = tailored
+        # Drive-aware worker count (utils/worker_policy.py): sized from the
+        # drive type and connection of every scanned directory, never above
+        # the CPU-scaled default (or the large-library count for huge
+        # libraries). An explicit --workers is always used as given.
+        legacy = DEFAULT_WORKERS
+        if len(self.image_files) >= LARGE_LIBRARY_THRESHOLD:
+            legacy = LARGE_LIBRARY_WORKERS
+        options = storage_options(self.args)
+        scan_dirs = [str(d) for d in self.args.directory]
+        decision = resolve_workers(
+            OpKind.SCAN, scan_dirs, legacy_default=legacy, requested=self.args.workers,
+            file_count=len(self.image_files) + len(self.video_files),
+            sample_files=self.image_files or self.video_files, **options,
+        )
+        effective_workers = decision.workers
+        self.logger.info(f"Workers: {decision.reason}")
+        stat_workers = resolve_workers(
+            OpKind.STAT, scan_dirs, legacy_default=32, overrides=options['overrides'],
+            allow_probe=False,
+        ).workers
 
         self.logger.info(f"Analyzing {len(self.image_files):,} images (this may take a while)...")
         _phase_start = time.monotonic()
+        tuner = make_tuner(decision, len(self.image_files))
         self.images, cache_stats = analyze_images_parallel(
             self.image_files,
             max_workers=effective_workers,
@@ -371,7 +371,15 @@ class CLIOrchestrator:
             show_progress=self.show_progress,
             use_cache=self.use_cache,
             calculate_phash=not self.args.exact_only,
+            stat_workers=stat_workers,
+            tuner=tuner,
         )
+        if tuner is not None and tuner.controller.adjustments:
+            summary = tuner.summary()
+            self.logger.info(
+                f"Adaptive workers: started at {summary['initial']}, "
+                f"settled at {summary['final']} (avg {summary['average']})"
+            )
         self.logger.info(f"Analysis done - {len(self.images):,} files in {time.monotonic() - _phase_start:.1f}s")
 
         # Show cache stats
@@ -391,6 +399,8 @@ class CLIOrchestrator:
                 show_progress=self.show_progress,
                 use_cache=self.use_cache,
                 calculate_phash=not self.args.exact_only,
+                stat_workers=stat_workers,
+                tuner=make_tuner(decision, len(self.video_files)),
             )
             self.logger.info(
                 f"Video analysis done - {len(self.video_images):,} files "

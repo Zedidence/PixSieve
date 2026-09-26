@@ -26,7 +26,7 @@ from flask import Blueprint, jsonify, request, send_file, render_template, Respo
 from ..state import scan_state, HistoryManager
 from ..models import DuplicateGroup
 from ..database import get_cache
-from ..config import VIDEO_EXTENSIONS
+from ..config import VIDEO_EXTENSIONS, is_media_file
 from ..scanner.dependencies import HAS_VIDEO_SUPPORT, cv2
 from ..utils import formatters, validators, selection, get_unique_path
 from .orchestrator import ScanOrchestrator
@@ -209,9 +209,11 @@ def api_scan():
                 default: true
               workers:
                 type: integer
-                default: 4
+                nullable: true
+                default: null
                 minimum: 1
                 maximum: 32
+                description: null = pick from the drive type (HDD/SSD/NVMe, SATA/USB/network)
               resolveSymlinks:
                 type: boolean
                 default: true
@@ -568,6 +570,10 @@ def api_rename_image():
     else:
         return jsonify({'error': 'No active scan results'}), 403
 
+    if not is_media_file(path):
+        return jsonify({'error': 'Only image and video files can be renamed'}), 400
+    if not is_media_file(new_name):
+        return jsonify({'error': 'The new name must keep an image or video file extension'}), 400
     if not os.path.exists(path):
         return jsonify({'error': 'File not found'}), 404
     if not os.path.isfile(path):
@@ -728,6 +734,13 @@ def api_delete():
         return jsonify({'error': 'Files must be a list'}), 400
     if len(files) == 0:
         return jsonify({'error': 'No files specified'}), 400
+
+    non_media = [f for f in files if not is_media_file(f)]
+    if non_media:
+        return jsonify({
+            'error': 'Only image and video files can be moved to trash',
+            'invalid_paths': non_media,
+        }), 400
 
     # Validate all file paths are within a scanned directory
     if scan_state.directories:
@@ -927,6 +940,13 @@ def api_batch_operation():
 
     operation = body.operation
     files = body.files
+
+    non_media = [f for f in files if not is_media_file(f)]
+    if non_media:
+        return jsonify({
+            'error': 'Only image and video files can be processed',
+            'invalid_paths': non_media,
+        }), 400
 
     # Validate all paths are within a scanned directory
     if scan_state.directories:

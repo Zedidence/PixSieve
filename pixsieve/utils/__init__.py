@@ -8,7 +8,7 @@ Provides:
 - platform: Platform-specific capability checks
 - exporters: Export duplicate results to files
 - operations: Shared utilities for media operations
-- disk_type: HDD/SSD detection for concurrency tuning
+- disk_type: drive media/bus detection for concurrency tuning
 """
 
 from __future__ import annotations
@@ -55,7 +55,15 @@ from .operations import (
     make_progress_bar,
     parse_date,
 )
-from .disk_type import detect_media_type, is_rotational, tailor_workers
+from .disk_type import (
+    DriveProfile,
+    detect_drive,
+    detect_drive_async,
+    same_device,
+    detect_media_type,
+    is_rotational,
+    tailor_workers,
+)
 
 __all__ = [
     # Submodules
@@ -99,6 +107,10 @@ __all__ = [
     'make_progress_bar',
     'parse_date',
     # Disk type
+    'DriveProfile',
+    'detect_drive',
+    'detect_drive_async',
+    'same_device',
     'detect_media_type',
     'is_rotational',
     'tailor_workers',

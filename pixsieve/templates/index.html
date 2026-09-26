@@ -110,11 +110,17 @@
                     <div class="form-row">
                         <div class="form-group">
                             <label for="workers">⚡ Worker Threads</label>
-                            <div class="range-container">
-                                <input type="range" id="workers" min="1" max="32" value="4" aria-label="Worker threads">
-                                <span class="range-value" id="workersValue">4</span>
+                            <div class="checkbox-group">
+                                <label>
+                                    <input type="checkbox" id="workersAuto" checked>
+                                    Auto (match the drive: HDD/SSD/NVMe, SATA/USB/network)
+                                </label>
                             </div>
-                            <small>More workers = faster analysis, more CPU usage. Left at the default, very large collections (100K+ images) automatically use more workers.</small>
+                            <div class="range-container">
+                                <input type="range" id="workers" min="1" max="32" value="4" aria-label="Worker threads" disabled>
+                                <span class="range-value" id="workersValue">Auto</span>
+                            </div>
+                            <small>Auto picks a worker count for each drive type: fewer for spinning or USB drives, which slow down when overloaded, more for internal SSDs and NVMe. Turn it off to set a fixed count.</small>
                         </div>
 
                         <div class="form-group">
@@ -218,6 +224,7 @@
                         <span class="progress-percentage" id="progressPercentage">0%</span>
                     </div>
                     <div class="progress-text" id="progressText">Preparing scan...</div>
+                    <div class="storage-badge" id="scanStorageBadge" hidden></div>
                 </div>
                 
                 <!-- Live Stats -->
@@ -468,6 +475,7 @@
                         <div class="ops-run-header">
                             <div class="ops-spinner"></div>
                             <span id="opsRunningText">Running operation...</span>
+                            <span class="storage-badge" id="opsStorageBadge" hidden></span>
                             <span class="ops-elapsed" id="opsElapsed">0s</span>
                         </div>
                         <div class="ops-progress-bar">
@@ -516,6 +524,7 @@
                         <div class="form-group">
                             <div class="checkbox-group">
                                 <label><input type="checkbox" id="moveOverwrite"> Overwrite existing files</label>
+                                <label><input type="checkbox" id="moveIncludeVideos"> Include videos</label>
                             </div>
                         </div>
                         <div class="ops-actions">
@@ -536,7 +545,8 @@
                             </div>
                             <div class="form-group">
                                 <label for="renameWorkers">Workers</label>
-                                <input type="number" id="renameWorkers" value="4" min="1" max="16">
+                                <input type="number" id="renameWorkers" min="1" max="16" placeholder="Auto">
+                                <small>Leave empty to match the drive type.</small>
                             </div>
                         </div>
                         <div class="form-group">
@@ -556,6 +566,11 @@
                             <h3>Rename by Parent Folder</h3>
                             <p>Rename files based on parent and grandparent folder names. Produces names like FolderName_SubFolder_1.jpg.</p>
                         </div>
+                        <div class="form-group">
+                            <div class="checkbox-group">
+                                <label><input type="checkbox" id="rpIncludeVideos"> Include videos</label>
+                            </div>
+                        </div>
                         <div class="ops-actions">
                             <button class="btn btn-primary" data-run-op="rename-parent">Run Parent Rename</button>
                         </div>
@@ -566,6 +581,11 @@
                         <div class="ops-header">
                             <h3>Alphabetical Sort</h3>
                             <p>Sort files into subfolders based on first character: A-G, H-N, O-T, U-Z, 0-9.</p>
+                        </div>
+                        <div class="form-group">
+                            <div class="checkbox-group">
+                                <label><input type="checkbox" id="alphaIncludeVideos"> Include videos</label>
+                            </div>
                         </div>
                         <div class="ops-actions">
                             <button class="btn btn-primary" data-run-op="sort-alpha">Run Alphabetical Sort</button>
@@ -790,8 +810,8 @@
                         </div>
                         <div class="form-group">
                             <label for="repairWorkers">Worker Threads</label>
-                            <input type="number" id="repairWorkers" value="4" min="1" max="16" style="width:80px">
-                            <small>Parallel scan threads (1–16). Lower for network drives.</small>
+                            <input type="number" id="repairWorkers" min="1" max="16" placeholder="Auto" style="width:80px">
+                            <small>Parallel scan threads (1–16). Leave empty to match the drive type.</small>
                         </div>
                         <div class="ops-actions">
                             <button class="btn btn-primary" data-run-op="repair">Scan &amp; Repair</button>

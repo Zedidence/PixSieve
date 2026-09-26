@@ -15,8 +15,9 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from ..config import IMAGE_EXTENSIONS
+from ..config import IMAGE_EXTENSIONS, media_only
 from ..utils import get_unique_path
+from ..utils.adaptive import AdaptiveTuner, call_in_slot, pool_plan
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ def move_to_parent(
     extensions: set[str] | None = None,
     dry_run: bool = False,
     max_workers: int = 4,
+    tuner: AdaptiveTuner | None = None,
 ) -> dict[str, int]:
     """
     Move all images from subdirectories into the parent folder.
@@ -39,6 +41,8 @@ def move_to_parent(
         dry_run: If True, only report what would be moved (default: False)
         max_workers: G2 - number of parallel move workers (default: 4).
             Set to 1 to disable parallelism (e.g., for network drives).
+        tuner: Optional utils/adaptive.py AdaptiveTuner that adjusts how many
+            files are processed at once during large jobs (see pool_plan()).
 
     Returns:
         Dictionary with statistics:
@@ -56,7 +60,7 @@ def move_to_parent(
         - Preserves file extensions
     """
     parent = Path(parent_path).resolve()
-    exts = extensions or IMAGE_EXTENSIONS
+    exts = media_only(extensions or IMAGE_EXTENSIONS)
     stats = {'moved': 0, 'skipped': 0, 'errors': 0}
     lock = threading.Lock()
 
@@ -102,10 +106,16 @@ def move_to_parent(
             logger.error(f"Failed to move {src}: {exc}")
             return 'error'
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(_do_move, src, dest): (src, dest) for src, dest in tasks}
+    pool_size, tuner = pool_plan(max_workers, tuner, len(tasks))
+    with ThreadPoolExecutor(max_workers=pool_size) as executor:
+        futures = {
+            executor.submit(call_in_slot, tuner, src, _do_move, src, dest): (src, dest)
+            for src, dest in tasks
+        }
         for future in as_completed(futures):
             result = future.result()
+            if tuner is not None:
+                tuner.maybe_adjust()
             with lock:
                 if result == 'ok':
                     stats['moved'] += 1
@@ -121,17 +131,24 @@ def move_with_structure(
     overwrite: bool = False,
     dry_run: bool = False,
     max_workers: int = 4,
+    tuner: AdaptiveTuner | None = None,
+    extensions: set[str] | None = None,
 ) -> dict[str, int]:
     """
-    Move files from source to destination preserving directory structure.
+    Move image files from source to destination preserving directory structure.
 
     Args:
         source: Source directory to move files from
         destination: Destination directory to move files to
         overwrite: If True, overwrite existing files (default: False)
         dry_run: If True, only report what would be moved (default: False)
+        extensions: File extensions to move (default: IMAGE_EXTENSIONS; add
+            videos via config.resolve_extensions(..., include_videos=True)).
+            Anything that isn't an image or video stays where it is.
         max_workers: G2 - number of parallel move workers (default: 4).
             Set to 1 to disable parallelism (e.g., for network drives).
+        tuner: Optional utils/adaptive.py AdaptiveTuner that adjusts how many
+            files are processed at once during large jobs (see pool_plan()).
 
     Returns:
         Dictionary with statistics:
@@ -150,6 +167,7 @@ def move_with_structure(
     """
     source = Path(source)
     destination = Path(destination)
+    exts = media_only(extensions or IMAGE_EXTENSIONS)
     stats = {'moved': 0, 'skipped': 0, 'errors': 0}
     lock = threading.Lock()
 
@@ -157,18 +175,18 @@ def move_with_structure(
         logger.error(f"Source does not exist: {source}")
         return stats
 
-    destination.mkdir(parents=True, exist_ok=True)
-
     # Collect work items; create destination dirs synchronously to avoid races
     tasks: list[tuple[Path, Path, bool]] = []  # (src, dest, will_overwrite)
     for root, _dirs, files in os.walk(source):
         rel_path = os.path.relpath(root, source)
         dest_dir = destination / rel_path
 
-        if not dry_run:
+        media_files = [f for f in files if Path(f).suffix.lower() in exts]
+        if media_files and not dry_run:
+            # Only mirror folders that actually receive files
             dest_dir.mkdir(parents=True, exist_ok=True)
 
-        for filename in files:
+        for filename in media_files:
             src_file = Path(root) / filename
             dest_file = dest_dir / filename
 
@@ -212,13 +230,16 @@ def move_with_structure(
             logger.error(f"Failed to move {src}: {exc}")
             return 'error'
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    pool_size, tuner = pool_plan(max_workers, tuner, len(tasks))
+    with ThreadPoolExecutor(max_workers=pool_size) as executor:
         futures = {
-            executor.submit(_do_move, src, dest, wo): (src, dest)
+            executor.submit(call_in_slot, tuner, src, _do_move, src, dest, wo): (src, dest)
             for src, dest, wo in tasks
         }
         for future in as_completed(futures):
             result = future.result()
+            if tuner is not None:
+                tuner.maybe_adjust()
             with lock:
                 if result == 'ok':
                     stats['moved'] += 1

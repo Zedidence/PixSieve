@@ -17,6 +17,7 @@ from typing import Optional, Callable, Any, Iterable, Union
 from ..config import DEFAULT_WORKERS, SLOW_FILE_WARN_SECONDS, WRITE_BATCH_SIZE, VIDEO_EXTENSIONS
 from ..database import get_cache, CacheStats
 from ..models import ImageInfo
+from ..utils.adaptive import AdaptiveTuner
 from .analysis import analyze_image
 from .video_analysis import analyze_video
 from .dependencies import HAS_TQDM, _tqdm_class
@@ -50,6 +51,7 @@ def _analyze_with_slow_warning(
     calculate_hash: bool,
     calculate_phash: bool = True,
     analyze_fn: AnalyzeFn = analyze_image,
+    tuner: Optional[AdaptiveTuner] = None,
 ) -> ImageInfo:
     """
     Wraps analyze_image()/analyze_video() with a timer so a single
@@ -57,9 +59,18 @@ def _analyze_with_slow_warning(
     USB/network read) shows up as a WARNING log instead of just silently
     eating time on a worker with no visible symptom besides an unexplained
     slow scan.
+
+    With a `tuner`, the analysis runs inside one of its adjustable slots
+    (the pool itself is sized to the tuner's ceiling) and reports the bytes
+    processed so it can steer concurrency toward peak throughput.
     """
     start = time.monotonic()
-    info = analyze_fn(filepath, calculate_phash, calculate_hash)
+    if tuner is None:
+        info = analyze_fn(filepath, calculate_phash, calculate_hash)
+    else:
+        with tuner.slot():
+            info = analyze_fn(filepath, calculate_phash, calculate_hash)
+        tuner.record(info.file_size)
     elapsed = time.monotonic() - start
     if elapsed >= SLOW_FILE_WARN_SECONDS:
         _logger.warning(f"Slow file: {filepath} took {elapsed:.1f}s to analyze")
@@ -78,6 +89,8 @@ def analyze_images_parallel(
     max_queued_futures: Optional[int] = None,
     stream_to_cache: bool = False,
     analyze_fn: AnalyzeFn = analyze_image,
+    stat_workers: Optional[int] = None,
+    tuner: Optional[AdaptiveTuner] = None,
 ) -> tuple[list[ImageInfo], CacheStats]:
     """
     Analyze multiple images in parallel with optional caching.
@@ -107,6 +120,12 @@ def analyze_images_parallel(
         analyze_fn: Per-file analysis function - analyze_image() (default) or
             analyze_video(). Shares this function's caching/threading/progress
             machinery, which is agnostic to what a single file's analysis does.
+        stat_workers: Threads for the cache-validation stat() pass (see
+            database/operations.py get_batch()); None uses its default.
+        tuner: Optional utils/adaptive.py AdaptiveTuner. When given, the pool
+            is sized to its ceiling and the number of files analyzed at once
+            is adjusted during the run (starting from its initial limit)
+            instead of staying fixed at max_workers.
 
     Returns:
         Tuple of (list of ImageInfo objects, CacheStats)
@@ -122,7 +141,7 @@ def analyze_images_parallel(
     to_analyze: list[str] = []
 
     if cache:
-        cached_results = cache.get_batch(filepaths)
+        cached_results = cache.get_batch(filepaths, max_workers=stat_workers)
         for filepath in filepaths:
             cached = cached_results.get(filepath)
             if cached is not None:
@@ -163,18 +182,22 @@ def analyze_images_parallel(
         callback_batch_size = 1000
         callback_interval = 1.0  # seconds
 
+        pool_size = tuner.ceiling if tuner is not None else max_workers
+
         # D3: bound in-flight futures to prevent memory exhaustion on large collections
-        queue_limit = max_queued_futures if max_queued_futures is not None else max_workers * 4
+        queue_limit = max_queued_futures if max_queued_futures is not None else pool_size * 4
         semaphore = threading.Semaphore(queue_limit)
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        with ThreadPoolExecutor(max_workers=pool_size) as executor:
             # Map future -> path for error reporting; use a dict that grows lazily
             future_to_path: dict[Future, str] = {}
 
             def _submit_bounded(path: str) -> Future:
                 """Submit after acquiring a semaphore slot; released on completion."""
                 semaphore.acquire()
-                fut = executor.submit(_analyze_with_slow_warning, path, calculate_hash, calculate_phash, analyze_fn)
+                fut = executor.submit(
+                    _analyze_with_slow_warning, path, calculate_hash, calculate_phash, analyze_fn, tuner
+                )
                 future_to_path[fut] = path
                 fut.add_done_callback(lambda _: semaphore.release())
                 return fut
@@ -199,6 +222,9 @@ def analyze_images_parallel(
                 if pbar is not None:
                     pbar.update(1)
 
+                if tuner is not None:
+                    tuner.maybe_adjust()
+
                 # Batch progress callbacks to reduce overhead
                 if progress_callback:
                     current_time = time.time()
@@ -218,7 +244,7 @@ def analyze_images_parallel(
             # I1: flush background writes, then read all newly-analyzed results
             # back from DB in one batch. Cache hits are already in `results`.
             cache.flush_writes()
-            freshly_cached = cache.get_batch(to_analyze)
+            freshly_cached = cache.get_batch(to_analyze, max_workers=stat_workers)
             results.extend(v for v in freshly_cached.values() if v is not None)
         elif cache and newly_analyzed:
             # Normal path: batch-write at end (F1: uses background writer)
@@ -239,6 +265,8 @@ def analyze_images_streaming(
     discovered_callback: Optional[Callable[[int], None]] = None,
     cancel_check: Optional[Callable[[], bool]] = None,
     analyze_fn: AnalyzeFn = analyze_image,
+    stat_workers: Optional[int] = None,
+    tuner: Optional[AdaptiveTuner] = None,
 ) -> tuple[list[ImageInfo], CacheStats]:
     """
     Analyze images from a chunked discovery generator, overlapping analysis
@@ -281,6 +309,8 @@ def analyze_images_streaming(
             exit promptly instead of walking the rest of the tree.
         analyze_fn: Per-file analysis function - analyze_image() (default) or
             analyze_video().
+        stat_workers: Threads for each chunk's cache-validation stat() pass.
+        tuner: Optional AdaptiveTuner (see analyze_images_parallel).
 
     Returns:
         Tuple of (list of ImageInfo objects, CacheStats)
@@ -301,9 +331,10 @@ def analyze_images_streaming(
     # Bounds how many files may be in flight (submitted-but-not-completed) at
     # once, so a discovery walk that runs far ahead of slow analysis (e.g. a
     # cold external drive) can't queue up unbounded memory.
-    semaphore = threading.Semaphore(max_workers * 4)
+    pool_size = tuner.ceiling if tuner is not None else max_workers
+    semaphore = threading.Semaphore(pool_size * 4)
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    with ThreadPoolExecutor(max_workers=pool_size) as executor:
         all_futures: list[Future] = []
 
         def _on_done(fut: Future, path: str) -> None:
@@ -332,7 +363,7 @@ def analyze_images_streaming(
                         )
 
                     if cache:
-                        cached_results = cache.get_batch(chunk)
+                        cached_results = cache.get_batch(chunk, max_workers=stat_workers)
                         to_submit = []
                         for fp in chunk:
                             cached = cached_results.get(fp)
@@ -348,14 +379,14 @@ def analyze_images_streaming(
 
                     for path in to_submit:
                         # This is where a slow/removable source drive naturally
-                        # throttles discovery: once max_workers*4 files are
+                        # throttles discovery: once pool_size*4 files are
                         # already in flight, we block here until analysis
                         # frees a slot - discovery of the *next* chunk still
                         # overlaps with analysis of files already submitted.
                         semaphore.acquire()
                         phash_flag = calculate_phash() if callable(calculate_phash) else calculate_phash
                         fut = executor.submit(
-                            _analyze_with_slow_warning, path, calculate_hash, phash_flag, analyze_fn
+                            _analyze_with_slow_warning, path, calculate_hash, phash_flag, analyze_fn, tuner
                         )
                         all_futures.append(fut)
                         fut.add_done_callback(lambda f, p=path: _on_done(f, p))
@@ -394,6 +425,8 @@ def analyze_images_streaming(
                 pbar.update(1)
 
             if kind == 'new':
+                if tuner is not None:
+                    tuner.maybe_adjust()
                 newly_analyzed.append(info)
                 # Flush to cache periodically rather than accumulating
                 # everything until the whole (possibly 800K+ file) scan

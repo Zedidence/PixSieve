@@ -10,8 +10,11 @@ import pytest
 
 from pixsieve.state import ScanState
 from pixsieve.api import orchestrator as orch_mod
-from pixsieve.api.orchestrator import ScanOrchestrator, DEFAULT_API_WORKERS
+from pixsieve import config
+from pixsieve.api.orchestrator import ScanOrchestrator
 from pixsieve.config import LARGE_LIBRARY_WORKERS
+from pixsieve.utils import disk_type
+from pixsieve.utils.disk_type import Bus, DriveProfile, Media
 
 
 @pytest.fixture(autouse=True)
@@ -98,14 +101,46 @@ class TestOrchestratorWiring:
 
         monkeypatch.setattr(orch_mod, 'analyze_images_streaming', _fake_streaming)
 
-    def test_default_workers_scaled_to_large_library_default(self, temp_dir, monkeypatch):
+    def test_auto_workers_use_large_library_default_when_tuning_off(self, temp_dir, monkeypatch):
         captured = {}
         self._stub_streaming(monkeypatch, captured)
 
-        orchestrator, scan_state = _make_orchestrator(temp_dir, workers=DEFAULT_API_WORKERS)
+        orchestrator, scan_state = _make_orchestrator(temp_dir)
         orchestrator.run()
 
         assert captured['max_workers'] == LARGE_LIBRARY_WORKERS
+
+    def test_auto_workers_follow_drive_type(self, temp_dir, monkeypatch):
+        captured = {}
+        self._stub_streaming(monkeypatch, captured)
+        monkeypatch.setattr(config, 'AUTO_WORKERS', True)
+        monkeypatch.setattr(orch_mod, 'warm_up', lambda paths: None)
+        monkeypatch.setattr(disk_type, 'detect_drive',
+                            lambda path: DriveProfile('usb', Media.HDD, Bus.USB))
+
+        orchestrator, scan_state = _make_orchestrator(temp_dir)
+        orchestrator.run()
+
+        assert captured['max_workers'] == 2
+        assert captured['stat_workers'] == 2
+        storage = scan_state.settings['storage']
+        assert storage['label'] == 'external HDD'
+        assert storage['workers'] == 2
+        assert scan_state.settings['detected_media_type'] == 'hdd'
+
+    def test_explicit_workers_ignore_drive_type(self, temp_dir, monkeypatch):
+        captured = {}
+        self._stub_streaming(monkeypatch, captured)
+        monkeypatch.setattr(config, 'AUTO_WORKERS', True)
+        monkeypatch.setattr(orch_mod, 'warm_up', lambda paths: None)
+        monkeypatch.setattr(disk_type, 'detect_drive',
+                            lambda path: DriveProfile('usb', Media.HDD, Bus.USB))
+
+        orchestrator, scan_state = _make_orchestrator(temp_dir, workers=4)
+        orchestrator.run()
+
+        assert captured['max_workers'] == 4
+        assert captured['tuner'] is None
 
     def test_explicit_worker_choice_is_respected(self, temp_dir, monkeypatch):
         captured = {}

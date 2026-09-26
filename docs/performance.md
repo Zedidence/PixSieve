@@ -6,12 +6,77 @@ Covers LSH acceleration, caching, format support, and tuning options for large i
 
 ## Table of Contents
 
-1. [HEIC/HEIF Support](#heicheif-support)
-2. [Video Duplicate Detection](#video-duplicate-detection)
-3. [LSH Acceleration](#lsh-acceleration)
-4. [Performance Optimizations](#performance-optimizations)
-5. [Caching System](#caching-system)
-6. [Troubleshooting](#troubleshooting)
+1. [Drive-Aware Worker Counts](#drive-aware-worker-counts)
+2. [HEIC/HEIF Support](#heicheif-support)
+3. [Video Duplicate Detection](#video-duplicate-detection)
+4. [LSH Acceleration](#lsh-acceleration)
+5. [Performance Optimizations](#performance-optimizations)
+6. [Caching System](#caching-system)
+7. [Troubleshooting](#troubleshooting)
+
+---
+
+## Drive-Aware Worker Counts
+
+PixSieve picks how many files to process at once from the storage it
+touches, not just the CPU count. More workers help an NVMe drive but hurt
+a spinning disk: past a few concurrent random reads, an HDD spends its time
+seeking. USB bridges and SD readers have shallow command queues, and
+network shares are latency-bound.
+
+For each directory, `pixsieve/utils/disk_type.py` detects:
+
+| | Windows | macOS | Linux |
+|---|---|---|---|
+| Media (HDD/SSD) | `Get-PhysicalDisk` MediaType / SpindleSpeed | `diskutil info -plist` SolidState | `/sys/block/*/queue/rotational` |
+| Connection | `Get-Disk` BusType | `diskutil` BusProtocol | sysfs device path, then udev `ID_BUS` |
+| Network | UNC path, `GetDriveTypeW` | `mount` fstype (smbfs, nfs, ...) | `/proc/mounts` fstype (nfs, cifs, sshfs, ...) |
+
+That gives a tier, and `pixsieve/utils/worker_policy.py` looks up a count
+per kind of operation (C = CPU count; scans never exceed the CPU-scaled default):
+
+| Tier | Scan | Rename / same-drive move | Copy between drives (per side) | Date rewrite | Repair | Cache stat |
+|---|---|---|---|---|---|---|
+| NVMe SSD | min(2C, 32) | 16 | 8 | 8 | min(C, 16) | 32 |
+| Internal SSD (SATA) | min(2C, 16) | 8 | 4 | 6 | min(C, 12) | 16 |
+| USB SSD | min(2C, 6) | 4 | 2 | 3 | min(C, 4) | 8 |
+| Internal HDD (SATA) | min(2C, 4) | 2 | 1 | 2 | min(C, 3) | 4 |
+| External HDD (USB) | min(2C, 2) | 2 | 1 | 1 | min(C, 2) | 2 |
+| USB drive, media unknown | min(2C, 3) | 2 | 1 | 2 | min(C, 3) | 4 |
+| SD card | min(2C, 2) | 1 | 1 | 1 | min(C, 2) | 2 |
+| Network share | min(2C, 8) | 8 | 2 | 4 | min(C, 6) | 16 |
+| Unknown (VM, detection failed) | *previous fixed default* | | | | | |
+
+- **Moves between drives** use the slower side. A move within one volume is
+  a rename and uses the rename column.
+- **Multi-directory scans** use the slowest drive.
+- **Speed test.** A USB drive whose media can't be determined (many USB
+  bridges misreport it), a RAID volume, or a network share gets a
+  read-only test of about 0.5 s. It times random 4 KiB reads of the
+  operation's own files, one at a time and then from 8 threads. No gain
+  from concurrency means a spinning disk or a single-queue bridge;
+  sub-millisecond reads with a gain mean an SSD. It only runs when at
+  least 200 files are involved.
+- **Adjustment while running.** Scans of 5,000+ files and copies/date
+  rewrites of 1,000+ files adjust concurrency during the run. The count
+  climbs one worker at a time while throughput improves and backs off
+  (x0.75) on a clear drop. It stays within one step of the starting
+  count, and at most 4 on a hard drive.
+
+**Overrides**, highest priority first:
+
+1. `-w N` (CLI) / `"workers": N` (API) / a number in the web UI: used
+   exactly. You get a warning if it is far above what a slow drive handles well.
+2. `PIXSIEVE_WORKERS=N`: one count for everything.
+3. `--storage-profile [PATH=]TYPE` / `PIXSIEVE_STORAGE_OVERRIDE="E:=usb-hdd;/mnt/nas=network"`:
+   correct a misdetected drive (`nvme`, `ssd`, `usb-ssd`, `hdd`, `usb-hdd`,
+   `usb`, `sd`, `network`, `ram`).
+4. `PIXSIEVE_AUTO_WORKERS=0` turns drive-aware tuning off and restores
+   the fixed defaults. `PIXSIEVE_IO_PROBE=0` / `--no-io-probe` disables
+   only the speed test.
+
+`pixsieve-cli storage PATH... [--probe]` shows what is detected and the
+counts each operation would use.
 
 ---
 

@@ -15,6 +15,7 @@ IMAGE_EXTENSIONS = {
     # RAW formats
     '.raw', '.cr2', '.cr3', '.nef', '.arw', '.dng', '.orf', '.rw2',
     '.pef', '.srw', '.raf', '.3fr', '.dcr', '.kdc', '.mrw', '.nrw',
+    '.srf', '.sr2', '.rwl',
     # Other formats
     '.ico', '.icns', '.psd', '.psb', '.xcf', '.svg', '.eps',
     '.heic', '.heif', '.avif', '.jxl',
@@ -37,6 +38,32 @@ VIDEO_EXTENSIONS = {
 }
 
 
+# Every file operation (rename, move, sort, date changes, ...) is limited to
+# these: PixSieve must never touch documents, archives or anything else that
+# happens to live in a photo folder.
+MEDIA_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS
+
+
+def media_only(extensions) -> set:
+    """
+    Normalize `extensions` ('.JPG', 'png', ...) and drop anything that isn't
+    an image or video type - the last line of defense against a caller- or
+    user-supplied extension list pulling in other files.
+    """
+    normalized = set()
+    for ext in extensions or ():
+        ext = str(ext).strip().lower()
+        if ext and not ext.startswith('.'):
+            ext = '.' + ext
+        normalized.add(ext)
+    return normalized & MEDIA_EXTENSIONS
+
+
+def is_media_file(path) -> bool:
+    """True if `path` has an image or video extension."""
+    return os.path.splitext(str(path))[1].lower() in MEDIA_EXTENSIONS
+
+
 def resolve_extensions(base, include_videos=False, *, video_extensions=None, extra=None):
     """Resolve the working extension set for an operation.
 
@@ -47,11 +74,14 @@ def resolve_extensions(base, include_videos=False, *, video_extensions=None, ext
     model rather than a silent replace, and is the single place that defines
     what `include_videos` means for every operation - CLI, API, and pipeline
     should all route their extension-set decision through this function.
+
+    The result never contains anything but image/video extensions
+    (media_only()), whatever `extra` asks for.
     """
     result = set(extra) if extra else set(base)
     if include_videos:
         result |= (video_extensions or VIDEO_EXTENSIONS)
-    return result
+    return media_only(result)
 
 
 # Format quality ranking (higher = better quality potential)
@@ -97,15 +127,61 @@ DEFAULT_THRESHOLD = 10
 _cpu_count = os.cpu_count() or 1
 DEFAULT_WORKERS = min(max(4, _cpu_count * 2), 16)
 
-# Worker caps applied when utils/disk_type.py confirms the target directory
-# sits on a rotational (HDD) drive rather than an SSD. A spinning disk's
-# throughput *drops* past a small number of concurrent random-access
-# operations (seek thrashing), unlike CPU-bound work or SSDs where the
-# CPU-scaled defaults above keep helping. These only ever pull a worker
-# count *down* from whatever the caller already chose - never up, and never
-# applied at all when disk-type detection can't confirm 'hdd'.
+# Worker counts for internal HDDs in utils/worker_policy.py's WORKER_TABLE.
+# A spinning disk's throughput *drops* past a small number of concurrent
+# random-access operations (seek thrashing), unlike CPU-bound work or SSDs
+# where the CPU-scaled defaults above keep helping.
 HDD_ANALYSIS_WORKERS = 4   # read-heavy: file discovery + image/video analysis
 HDD_WRITE_WORKERS = 2      # write-heavy: move/rename/convert operations
+
+# Default worker count for file operations (move/rename/metadata/repair)
+# when the drive can't be classified or drive-aware tuning is off.
+DEFAULT_OP_WORKERS = 4
+
+
+def _env_flag(name: str, default: bool = True) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in ('0', 'false', 'no', 'off', '')
+
+
+def _env_workers(name: str):
+    try:
+        value = int(os.environ.get(name, ''))
+    except ValueError:
+        return None
+    return value if 1 <= value <= 32 else None
+
+
+def _env_storage_overrides(name: str) -> dict:
+    # 'E:=usb-hdd;/mnt/nas=network' -> {'E:': 'usb-hdd', '/mnt/nas': 'network'}
+    # (a bare spec with no path applies to every path). Specs are validated
+    # where they're used (utils/worker_policy.py), not here.
+    result = {}
+    for part in os.environ.get(name, '').split(';'):
+        part = part.strip()
+        if not part:
+            continue
+        prefix, _, spec = part.rpartition('=')
+        result[prefix.strip() or '*'] = spec.strip().lower()
+    return result
+
+
+# Drive-aware worker tuning (utils/worker_policy.py). When on, operations
+# pick worker counts from the storage they touch - HDD vs SSD vs NVMe, and
+# SATA vs USB vs network. PIXSIEVE_AUTO_WORKERS=0 restores the fixed defaults.
+AUTO_WORKERS = _env_flag('PIXSIEVE_AUTO_WORKERS')
+# Force one worker count for every operation (an explicit -w still wins)
+ENV_WORKERS = _env_workers('PIXSIEVE_WORKERS')
+# Correct a misdetected drive, e.g. 'E:=usb-hdd;/mnt/nas=network'
+STORAGE_OVERRIDES = _env_storage_overrides('PIXSIEVE_STORAGE_OVERRIDE')
+# Short read-only speed test for drives whose type is ambiguous (utils/io_probe.py)
+IO_PROBE_ENABLED = _env_flag('PIXSIEVE_IO_PROBE')
+# Adjust worker counts while long operations run (utils/adaptive.py), only
+# for jobs at least this large
+ADAPTIVE_MIN_FILES_SCAN = 5_000
+ADAPTIVE_MIN_FILES_OPS = 1_000
 
 # Maximum image pixels before PIL raises DecompressionBombWarning
 # Default PIL limit ~89MP; raised for high-res scans and panoramas
@@ -121,7 +197,7 @@ LSH_AUTO_THRESHOLD = 1000  # Auto-enable LSH when >= this many images
 
 # Large library thresholds and tuning
 LARGE_LIBRARY_THRESHOLD = 100_000                   # files — triggers large-library mode
-LARGE_LIBRARY_WORKERS   = min(os.cpu_count() * 4, 32)  # more aggressive parallelism
+LARGE_LIBRARY_WORKERS   = min(_cpu_count * 4, 32)      # more aggressive parallelism
 WRITE_BATCH_SIZE        = 5_000                     # cache insert batch size before lock release
 DISCOVERY_CHUNK_SIZE    = 1_000                     # files per discovery chunk
 
@@ -134,12 +210,10 @@ PERCEPTUAL_AUTO_DISABLE_THRESHOLD = 50_000
 # Union-Find skip instead.
 LSH_DEDUPE_SEEN_SET_MAX = 500_000
 
-# The web API's own default for a request's `workers` field (used by both
-# api/schemas.py's Pydantic models and api/orchestrator.py, which needs the
-# literal default value to detect "the caller left this at its default" for
-# large-library auto-scaling). Deliberately separate from DEFAULT_WORKERS
-# above, which auto-scales with the server's CPU count for the CLI - this is
-# a fixed default so API behavior doesn't vary by server hardware.
+# Fixed worker count for web API operations when the drive can't be
+# classified. Deliberately separate from DEFAULT_WORKERS above, which scales
+# with the server's CPU count for the CLI, so API behavior doesn't vary by
+# server hardware. (A request's `workers` field defaults to null = auto.)
 DEFAULT_API_WORKERS = 4
 
 # Bit depth mapping for different image modes

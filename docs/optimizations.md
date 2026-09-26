@@ -14,7 +14,7 @@ Opportunities identified 2026-02-20 via codebase analysis. Checked boxes = compl
 
 ## Critical / Quick Wins
 
-- [x] **J1: Worker Count Auto-Detection** — `DEFAULT_WORKERS = 4` is hardcoded. Auto-detect based on `cpu_count * 2`, capped by available memory.
+- [x] **J1: Worker Count Auto-Detection** — `DEFAULT_WORKERS = 4` is hardcoded. Auto-detect based on `cpu_count * 2` (min 4, max 16). *(No memory cap was implemented. Worker counts are now also drive-aware — see [performance.md](performance.md#drive-aware-worker-counts).)*
   - Files: [`pixsieve/config.py:58`](../pixsieve/config.py), [`pixsieve/scanner/parallel.py:23`](../pixsieve/scanner/parallel.py)
   - Effort: ~1.5h | Benefit: 50–100% on modern multi-core systems
 

@@ -26,12 +26,11 @@ from ..database import CacheStats
 from ..config import (
     LSH_AUTO_THRESHOLD,
     LARGE_LIBRARY_WORKERS,
-    HDD_ANALYSIS_WORKERS,
     PERCEPTUAL_AUTO_DISABLE_THRESHOLD,
-    DEFAULT_API_WORKERS,
 )
 from ..utils import formatters, selection
-from ..utils.disk_type import tailor_workers
+from ..utils.adaptive import make_tuner
+from ..utils.worker_policy import OpKind, resolve_workers, reset_caches, warm_up
 
 # Module logger
 _logger = logging.getLogger(__name__)
@@ -198,7 +197,7 @@ class ScanOrchestrator:
         recursive: bool = True,
         use_cache: bool = True,
         use_lsh: Optional[bool] = None,
-        workers: int = 4,
+        workers: Optional[int] = None,
         resolve_symlinks: bool = True,
         auto_select_strategy: str = 'quality',
         include_videos: bool = False,
@@ -218,7 +217,8 @@ class ScanOrchestrator:
             recursive: Scan subdirectories
             use_cache: Use SQLite caching
             use_lsh: Force LSH on/off (None = auto)
-            workers: Number of parallel workers
+            workers: Number of parallel workers; None = pick from the
+                drive type of the scanned directories (utils/worker_policy.py)
             resolve_symlinks: Canonicalize each discovered path and dedupe
                 files reachable via multiple symlinks. Costs one extra
                 filesystem round-trip per file during discovery - disabling
@@ -288,6 +288,13 @@ class ScanOrchestrator:
             # Save to history
             for d in self.directories:
                 HistoryManager.save_directory(d['path'])
+
+            if self.workers is None:
+                # Detect drive types while discovery starts; a long-running
+                # server re-detects per scan in case a different drive now
+                # sits at the same letter/mount point.
+                reset_caches()
+                warm_up(d['path'] for d in self.directories)
 
             # Phases 1-2: Discover and analyze images (overlapped)
             result = self._discover_and_analyze()
@@ -413,32 +420,22 @@ class ScanOrchestrator:
                 return
             progress_tracker.update_analysis_progress(current, total, analysis_start_time)
 
-        # Large-library worker scaling: since discovery and analysis now
-        # overlap, the total file count isn't known before the thread pool
-        # is created, so this can't be gated on a discovered-count threshold
-        # the way the CLI's (still sequential) path can. Instead, apply the
-        # large-library worker count whenever the caller left `workers` at
-        # its default - an explicit choice (e.g. deliberately throttling
-        # concurrency on a slow external drive) is never overridden.
-        effective_workers = self.workers
-        if self.workers == DEFAULT_API_WORKERS:
-            effective_workers = LARGE_LIBRARY_WORKERS
-            _logger.info(f"Workers left at default - using large-library default of {effective_workers}")
-
-        # HDD tailoring: only when the caller left `workers` at its default
-        # (an explicit choice, e.g. deliberately throttling on a slow external
-        # drive, is never overridden). Caps down only for a confirmed
-        # rotational drive; SSD/unknown media keep the large-library default.
-        if self.workers == DEFAULT_API_WORKERS:
-            primary_dir = self.directories[0]['path']
-            tailored = tailor_workers(primary_dir, effective_workers, HDD_ANALYSIS_WORKERS)
-            if tailored != effective_workers:
-                _logger.info(
-                    f"HDD detected at {primary_dir} - reducing workers "
-                    f"{effective_workers} -> {tailored} to avoid seek thrashing"
-                )
-                effective_workers = tailored
-                self.scan_state.settings['detected_media_type'] = 'hdd'
+        # Drive-aware worker count. Discovery and analysis overlap, so the
+        # file count isn't known before the pool starts: the large-library
+        # count is the ceiling, and each drive's type decides how much of it
+        # to use (an HDD or USB drive gets far fewer). The adaptive tuner
+        # then adjusts during long scans. An explicit `workers` is used as-is.
+        scan_dirs = [d['path'] for d in self.directories]
+        decision = resolve_workers(
+            OpKind.SCAN, scan_dirs, legacy_default=LARGE_LIBRARY_WORKERS, requested=self.workers,
+        )
+        effective_workers = decision.workers
+        stat_workers = resolve_workers(OpKind.STAT, scan_dirs, legacy_default=32).workers
+        tuner = make_tuner(decision, None)
+        _logger.info(f"Workers: {decision.reason}")
+        self.scan_state.settings['storage'] = decision.as_dict()
+        if any(p.media.value == 'hdd' for p in decision.profiles):
+            self.scan_state.settings['detected_media_type'] = 'hdd'
 
         images, cache_stats = analyze_images_streaming(
             _chunks(),
@@ -451,7 +448,11 @@ class ScanOrchestrator:
             cancel_check=lambda: self.scan_state.cancel_requested,
             logger=_logger,
             analyze_fn=analyze_media,
+            stat_workers=stat_workers,
+            tuner=tuner,
         )
+        if tuner is not None:
+            self.scan_state.settings['storage']['adaptive'] = tuner.summary()
 
         self.scan_state.total_files = cache_stats.total_files
         self.scan_state.progress_details['elapsed_seconds'] = (

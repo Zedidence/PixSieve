@@ -454,8 +454,40 @@ function updateThresholdDisplay() {
 }
 
 function updateWorkersDisplay() {
-    const val = document.getElementById('workers').value;
-    document.getElementById('workersValue').textContent = val;
+    const slider = document.getElementById('workers');
+    const auto = document.getElementById('workersAuto');
+    const isAuto = !auto || auto.checked;
+    slider.disabled = isAuto;
+    document.getElementById('workersValue').textContent = isAuto ? 'Auto' : slider.value;
+}
+
+// Worker count from an optional number field: empty = null = auto (drive-aware)
+function _optionalWorkers(id) {
+    const n = parseInt(document.getElementById(id).value, 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+// "USB SSD → 4 workers" badge from a worker_policy decision (settings.storage
+// for scans, `workers` in the operation status for file operations).
+function renderStorageBadge(id, info) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (!info || !info.workers) {
+        el.hidden = true;
+        el.textContent = '';
+        return;
+    }
+    const n = info.workers;
+    const count = `${n} worker${n === 1 ? '' : 's'}`;
+    if (info.source === 'user') {
+        el.textContent = `${count} (set manually)`;
+    } else if (info.source === 'fallback' || info.source === 'env') {
+        el.textContent = `${count} (default)`;
+    } else {
+        el.textContent = `${info.label} → ${count}`;
+    }
+    el.title = info.reason || '';
+    el.hidden = false;
 }
 
 function toggleAdvancedOptions() {
@@ -567,7 +599,9 @@ function startScan() {
     const perceptualOnly = document.getElementById('perceptualOnly').checked;
     const recursive = document.getElementById('recursive').checked;
     const useCache = document.getElementById('useCache').checked;
-    const workers = parseInt(document.getElementById('workers').value) || 4;
+    const workers = document.getElementById('workersAuto').checked
+        ? null
+        : (parseInt(document.getElementById('workers').value) || 4);
     const resolveSymlinks = document.getElementById('resolveSymlinks').checked;
     const autoSelectStrategy = document.getElementById('autoSelectStrategy').value;
     const includeVideos = document.getElementById('includeVideos').checked;
@@ -757,6 +791,7 @@ function updateProgressUI(data) {
     document.getElementById('liveEta').textContent = formatEta(details.eta_seconds);
     document.getElementById('liveCacheHits').textContent = formatNumber(details.cache_hits || 0);
     document.getElementById('liveElapsed').textContent = formatElapsed(details.elapsed_seconds || 0);
+    renderStorageBadge('scanStorageBadge', data.settings && data.settings.storage);
 }
 
 function updateStageNodes(stage) {
@@ -2746,18 +2781,21 @@ function buildOperationPayload(opName) {
         case 'move': {
             payload.destination = document.getElementById('moveDestination').value.trim();
             payload.overwrite = document.getElementById('moveOverwrite').checked;
+            payload.includeVideos = document.getElementById('moveIncludeVideos').checked;
             break;
         }
         case 'rename-random': {
             payload.nameLength = parseInt(document.getElementById('renameLength').value) || 12;
-            payload.workers = parseInt(document.getElementById('renameWorkers').value) || 4;
+            payload.workers = _optionalWorkers('renameWorkers');
             payload.recursive = document.getElementById('renameRecursive').checked;
             payload.includeVideos = document.getElementById('renameIncludeVideos').checked;
             break;
         }
         case 'rename-parent':
+            payload.includeVideos = document.getElementById('rpIncludeVideos').checked;
             break;
         case 'sort-alpha':
+            payload.includeVideos = document.getElementById('alphaIncludeVideos').checked;
             break;
         case 'sort-color': {
             payload.method = document.getElementById('colorMethod').value;
@@ -2805,7 +2843,7 @@ function buildOperationPayload(opName) {
             payload.trashFolder = document.getElementById('repairTrashDir').value.trim();
             payload.attemptRepair = document.getElementById('repairAttemptRepair').checked;
             payload.quarantineUnfixable = document.getElementById('repairQuarantine').checked;
-            payload.workers = parseInt(document.getElementById('repairWorkers').value) || 4;
+            payload.workers = _optionalWorkers('repairWorkers');
             break;
         }
         case 'pipeline': {
@@ -2926,6 +2964,8 @@ function startOpsStream() {
     opsStream.onmessage = (e) => {
         let data;
         try { data = JSON.parse(e.data); } catch { return; }
+
+        renderStorageBadge('opsStorageBadge', data.workers);
 
         // Relay progress updates from backend
         if (data.status === 'running') {
@@ -3172,6 +3212,7 @@ document.addEventListener('input', e => {
     const t = e.target;
     if (t.id === 'threshold')    { updateThresholdDisplay(); return; }
     if (t.id === 'workers')      { updateWorkersDisplay(); return; }
+    if (t.id === 'workersAuto')  { updateWorkersDisplay(); return; }
     if (t.id === 'searchFilter') { debounce('search', applyFilters, 250); return; }
     if (t.dataset.output) {
         const out = document.getElementById(t.dataset.output);

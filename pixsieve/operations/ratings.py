@@ -15,7 +15,7 @@ import subprocess
 import threading
 from pathlib import Path
 
-from ..config import RATING_EXTENSIONS
+from ..config import RATING_EXTENSIONS, media_only
 from ..utils import find_files, make_progress_bar
 from ..utils.platform import check_exiftool_available
 
@@ -371,7 +371,7 @@ def strip_favorite_ratings(
 
     exiftool_path = shutil.which("exiftool")
 
-    exts = extensions or RATING_EXTENSIONS
+    exts = media_only(extensions or RATING_EXTENSIONS)
     files = find_files(Path(directory), exts, recursive)
     stats['scanned'] = len(files)
     if not files:

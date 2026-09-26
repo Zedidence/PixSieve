@@ -13,6 +13,7 @@ import logging
 import os
 import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -20,7 +21,7 @@ from typing import Any
 from flask import Blueprint, jsonify, request, Response
 
 from ..config import (
-    IMAGE_EXTENSIONS, RATING_EXTENSIONS, HDD_WRITE_WORKERS, DEFAULT_API_WORKERS,
+    IMAGE_EXTENSIONS, RATING_EXTENSIONS, DEFAULT_API_WORKERS,
     resolve_extensions,
 )
 from ..operations import (
@@ -44,11 +45,13 @@ from ..operations import (
     supports_video,
 )
 from ..utils.platform import check_exiftool_available
-from ..utils.disk_type import tailor_workers
+from ..utils.adaptive import make_tuner
+from ..utils.worker_policy import MAX_WORKERS, OpKind, resolve_workers, reset_caches
 from ..utils.validators import validate_directory as _shared_validate_directory
 from .schemas import (
     parse_request,
     DirectoryRequest,
+    MediaDirectoryRequest,
     MoveRequest,
     MoveToParentRequest,
     RenameRandomRequest,
@@ -76,6 +79,7 @@ _operation_state = {
     'error': None,              # Error message if failed
     'progress': None,           # 0-100 integer or None (indeterminate)
     'progress_text': '',        # Human-readable progress description
+    'workers': None,            # worker_policy.WorkerDecision.as_dict() for the operation
 }
 _operation_lock = threading.Lock()
 
@@ -147,7 +151,34 @@ def _check_include_videos(include_videos: bool, op_name: str) -> tuple[bool, tup
     return include_videos, None
 
 
-def _run_operation(name: str, func, *args, **kwargs) -> bool:
+@dataclass(frozen=True)
+class _WorkerPlan:
+    """
+    How to size an operation's thread pool, resolved on the background
+    thread - drive detection can take a second or more (PowerShell on
+    Windows), which must not delay the HTTP response.
+    """
+    op: OpKind
+    sources: tuple[str, ...]
+    requested: int | None
+    destination: str | None = None
+    kwarg: str = 'max_workers'
+    upper: int = MAX_WORKERS
+    tune: bool = False   # also pass an adaptive `tuner=` for long jobs
+
+    def apply(self, kwargs: dict) -> dict:
+        decision = resolve_workers(
+            self.op, list(self.sources), legacy_default=DEFAULT_API_WORKERS,
+            requested=self.requested, destination=self.destination, upper=self.upper,
+        )
+        _logger.info(f"Workers: {decision.reason}")
+        kwargs[self.kwarg] = decision.workers
+        if self.tune:
+            kwargs['tuner'] = make_tuner(decision, None)
+        return decision.as_dict()
+
+
+def _run_operation(name: str, func, *args, worker_plan: _WorkerPlan | None = None, **kwargs) -> bool:
     """
     Run an operation in a background thread and update state.
 
@@ -155,6 +186,9 @@ def _run_operation(name: str, func, *args, **kwargs) -> bool:
     running (mirroring the 409-on-concurrent-start behavior /api/scan and
     /api/delete already have) instead of silently racing the shared
     _operation_state dict between two overlapping background threads.
+
+    With a `worker_plan`, the drive-aware worker count is resolved on the
+    background thread and passed to `func` as that plan's keyword argument.
     """
     with _operation_lock:
         if _operation_state['status'] == 'running':
@@ -165,9 +199,15 @@ def _run_operation(name: str, func, *args, **kwargs) -> bool:
         _operation_state['error'] = None
         _operation_state['progress'] = None
         _operation_state['progress_text'] = ''
+        _operation_state['workers'] = None
 
     def _worker():
         try:
+            if worker_plan is not None:
+                reset_caches()
+                workers_info = worker_plan.apply(kwargs)
+                with _operation_lock:
+                    _operation_state['workers'] = workers_info
             result = func(*args, **kwargs)
             with _operation_lock:
                 _operation_state['status'] = 'complete'
@@ -215,6 +255,7 @@ def operations_status():
             'error': _operation_state['error'],
             'progress': _operation_state['progress'],
             'progress_text': _operation_state['progress_text'],
+            'workers': _operation_state['workers'],
         })
 
 
@@ -240,6 +281,7 @@ def stream_status():
                     'error': _operation_state['error'],
                     'progress': _operation_state['progress'],
                     'progress_text': _operation_state['progress_text'],
+                    'workers': _operation_state['workers'],
                 }
             yield f"data: {json.dumps(state)}\n\n"
             if state['status'] in ('complete', 'error', 'idle'):
@@ -295,7 +337,8 @@ def api_move_to_parent():
         body.directory,
         extensions=extensions,
         dry_run=body.dryRun,
-        max_workers=tailor_workers(body.directory, 4, HDD_WRITE_WORKERS),
+        # Moving within one directory tree is a rename on the same volume
+        worker_plan=_WorkerPlan(OpKind.METADATA, (body.directory,), body.workers),
     ):
         return _busy_response()
     return jsonify({'status': 'started', 'operation': 'move-to-parent'})
@@ -314,6 +357,10 @@ def api_move():
     if not os.path.isabs(body.destination):
         return jsonify({'error': 'Destination must be an absolute path'}), 400
 
+    include_videos, err = _check_include_videos(body.includeVideos, 'move')
+    if err:
+        return err
+
     if not _run_operation(
         'move',
         move_with_structure,
@@ -321,8 +368,11 @@ def api_move():
         body.destination,
         overwrite=body.overwrite,
         dry_run=body.dryRun,
-        # Tailored on the destination - that's where the actual writes land.
-        max_workers=tailor_workers(body.destination, 4, HDD_WRITE_WORKERS),
+        extensions=resolve_extensions(IMAGE_EXTENSIONS, include_videos),
+        # Sized on both ends: a same-volume move is a rename, a cross-volume
+        # one is bounded by the slower drive.
+        worker_plan=_WorkerPlan(OpKind.COPY, (body.directory,), body.workers,
+                                destination=body.destination, tune=True),
     ):
         return _busy_response()
     return jsonify({'status': 'started', 'operation': 'move'})
@@ -351,10 +401,6 @@ def api_rename_random():
         IMAGE_EXTENSIONS, include_videos, extra=_parse_extensions(body.extensions),
     )
 
-    workers = body.workers
-    if workers == DEFAULT_API_WORKERS:
-        workers = tailor_workers(body.directory, workers, HDD_WRITE_WORKERS)
-
     if not _run_operation(
         'rename-random',
         rename_random,
@@ -363,7 +409,8 @@ def api_rename_random():
         extensions=extensions,
         recursive=body.recursive,
         dry_run=body.dryRun,
-        workers=workers,
+        worker_plan=_WorkerPlan(OpKind.METADATA, (body.directory,), body.workers,
+                                kwarg='workers', upper=16),
     ):
         return _busy_response()
     return jsonify({'status': 'started', 'operation': 'rename-random'})
@@ -372,7 +419,7 @@ def api_rename_random():
 @operations_bp.route('/api/operations/rename/parent', methods=['POST'])
 def api_rename_parent():
     """Rename files based on parent folder names."""
-    body, err = parse_request(DirectoryRequest, request.json)
+    body, err = parse_request(MediaDirectoryRequest, request.json)
     if err:
         return err
 
@@ -380,11 +427,16 @@ def api_rename_parent():
     if not valid:
         return jsonify({'error': error}), 400
 
+    include_videos, err = _check_include_videos(body.includeVideos, 'rename-parent')
+    if err:
+        return err
+
     if not _run_operation(
         'rename-parent',
         rename_by_parent,
         body.directory,
         dry_run=body.dryRun,
+        extensions=resolve_extensions(IMAGE_EXTENSIONS, include_videos),
     ):
         return _busy_response()
     return jsonify({'status': 'started', 'operation': 'rename-parent'})
@@ -397,7 +449,7 @@ def api_rename_parent():
 @operations_bp.route('/api/operations/sort/alpha', methods=['POST'])
 def api_sort_alpha():
     """Sort files into alphabetical group folders."""
-    body, err = parse_request(DirectoryRequest, request.json)
+    body, err = parse_request(MediaDirectoryRequest, request.json)
     if err:
         return err
 
@@ -405,11 +457,16 @@ def api_sort_alpha():
     if not valid:
         return jsonify({'error': error}), 400
 
+    include_videos, err = _check_include_videos(body.includeVideos, 'sort-alpha')
+    if err:
+        return err
+
     if not _run_operation(
         'sort-alpha',
         sort_alphabetical,
         body.directory,
         dry_run=body.dryRun,
+        extensions=resolve_extensions(IMAGE_EXTENSIONS, include_videos),
     ):
         return _busy_response()
     return jsonify({'status': 'started', 'operation': 'sort-alpha'})
@@ -592,6 +649,7 @@ def api_randomize_dates():
         dry_run=body.dryRun,
         sync_exif=body.syncExif,
         extensions=resolve_extensions(IMAGE_EXTENSIONS, include_videos),
+        worker_plan=_WorkerPlan(OpKind.REWRITE, (body.directory,), body.workers, tune=True),
     ):
         return _busy_response()
     return jsonify({'status': 'started', 'operation': 'randomize-dates'})
@@ -641,6 +699,9 @@ def api_randomize_dates_per_folder():
         dry_run=body.dryRun,
         sync_exif=body.syncExif,
         extensions=resolve_extensions(IMAGE_EXTENSIONS, include_videos),
+        worker_plan=_WorkerPlan(
+            OpKind.REWRITE, tuple(r['folder'] for r in folder_ranges), body.workers, tune=True,
+        ),
     ):
         return _busy_response()
     return jsonify({'status': 'started', 'operation': 'randomize-dates'})
@@ -768,6 +829,7 @@ def api_pipeline():
         dry_run=body.dryRun,
         trash_dir=trash_dir,
         include_videos=include_videos,
+        workers=body.workers,
     ):
         return _busy_response()
     return jsonify({'status': 'started', 'operation': 'pipeline'})
@@ -795,14 +857,14 @@ def api_repair():
     if not os.path.isabs(body.trashFolder):
         return jsonify({'error': 'Trash folder must be an absolute path'}), 400
 
-    def _repair_and_serialize():
+    def _repair_and_serialize(max_workers: int):
         result = scan_and_repair(
             body.directory,
             trash_folder=body.trashFolder,
             attempt_repair=body.attemptRepair,
             quarantine_unfixable=body.quarantineUnfixable,
             dry_run=body.dryRun,
-            max_workers=body.workers,
+            max_workers=max_workers,
         )
         # Serialize RepairResult objects and separate problem files from stats
         problems = [
@@ -821,6 +883,10 @@ def api_repair():
             'problems': problems,
         }
 
-    if not _run_operation('repair', _repair_and_serialize):
+    if not _run_operation(
+        'repair', _repair_and_serialize,
+        worker_plan=_WorkerPlan(OpKind.REPAIR, (body.directory,), body.workers,
+                                destination=body.trashFolder, upper=16),
+    ):
         return _busy_response()
     return jsonify({'status': 'started', 'operation': 'repair'})

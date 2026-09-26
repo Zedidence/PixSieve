@@ -19,7 +19,7 @@ from typing import Callable
 from PIL import Image
 import numpy as np
 
-from ..config import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, ALPHA_SORT_GROUPS, resolve_extensions
+from ..config import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, ALPHA_SORT_GROUPS, media_only, resolve_extensions
 from ..utils import get_unique_path, make_progress_bar
 from ..database import get_cache
 
@@ -36,15 +36,19 @@ warnings.filterwarnings('ignore', category=UserWarning)
 def sort_alphabetical(
     directory: str | Path,
     dry_run: bool = False,
+    extensions: set[str] | None = None,
 ) -> dict[str, int]:
     """
-    Sort files into subfolders based on first character.
+    Sort image files into subfolders based on first character.
 
     Creates folders: A-G, H-N, O-T, U-Z, 0-9
 
     Args:
         directory: Directory containing files to sort
         dry_run: If True, only report what would be sorted (default: False)
+        extensions: File extensions to sort (default: IMAGE_EXTENSIONS; add
+            videos via resolve_extensions(..., include_videos=True)).
+            Anything that isn't an image or video stays where it is.
 
     Returns:
         Dictionary with statistics:
@@ -62,6 +66,7 @@ def sort_alphabetical(
         - Case-insensitive grouping
     """
     base_dir = Path(directory).resolve()
+    exts = media_only(extensions or IMAGE_EXTENSIONS)
     stats = {'moved': 0, 'skipped': 0, 'errors': 0}
 
     def _get_group(char: str) -> str | None:
@@ -79,7 +84,7 @@ def sort_alphabetical(
 
     for filename in os.listdir(base_dir):
         full_path = base_dir / filename
-        if not full_path.is_file():
+        if not full_path.is_file() or full_path.suffix.lower() not in exts:
             continue
 
         group = _get_group(filename[0])

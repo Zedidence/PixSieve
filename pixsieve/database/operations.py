@@ -102,7 +102,9 @@ class CacheOperations:
             logger.debug(f"Failed to get cached info for {filepath}: {e}")
             return None
 
-    def get_batch(self, filepaths: list[str]) -> dict[str, Optional[ImageInfo]]:
+    def get_batch(
+        self, filepaths: list[str], max_workers: Optional[int] = None,
+    ) -> dict[str, Optional[ImageInfo]]:
         """
         Get cached info for multiple files efficiently.
 
@@ -112,6 +114,8 @@ class CacheOperations:
 
         Args:
             filepaths: List of file paths
+            max_workers: Threads for the stat() fan-out - pass the drive-aware
+                STAT count from utils/worker_policy.py; None uses _STAT_WORKERS.
 
         Returns:
             Dict mapping filepath to ImageInfo (or None if not cached)
@@ -143,7 +147,7 @@ class CacheOperations:
             last_log = stat_start
 
             cache_keys = {}
-            with ThreadPoolExecutor(max_workers=_STAT_WORKERS) as executor:
+            with ThreadPoolExecutor(max_workers=max_workers or _STAT_WORKERS) as executor:
                 for i, stat_result in enumerate(executor.map(_stat_one, filepaths), start=1):
                     if stat_result is not None:
                         cache_keys[stat_result[0]] = stat_result[1]

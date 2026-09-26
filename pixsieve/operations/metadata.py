@@ -18,8 +18,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from ..config import IMAGE_EXTENSIONS, EXIF_EXTENSIONS
+from ..config import IMAGE_EXTENSIONS, EXIF_EXTENSIONS, media_only
 from ..utils import find_files, make_progress_bar
+from ..utils.adaptive import AdaptiveTuner, call_in_slot, pool_plan
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +162,7 @@ def randomize_dates(
     sync_exif: bool = True,
     max_workers: int = 4,
     extensions: set[str] | None = None,
+    tuner: AdaptiveTuner | None = None,
 ) -> dict[str, int]:
     """
     Randomize all date fields for images in a directory.
@@ -188,13 +190,15 @@ def randomize_dates(
             only randomizes filesystem timestamps for video files - sync_exif
             still gates on EXIF_EXTENSIONS (piexif has no video support), so
             video files never reach set_exif_dates() regardless of this param.
+        tuner: Optional utils/adaptive.py AdaptiveTuner that adjusts how many
+            files are processed at once during large jobs (see pool_plan()).
 
     Returns:
         Dictionary with statistics:
             - success: Number of files successfully updated
             - failed: Number of files that failed to update
     """
-    exts = extensions or IMAGE_EXTENSIONS
+    exts = media_only(extensions or IMAGE_EXTENSIONS)
     files = find_files(Path(directory), exts, recursive)
     stats = {'success': 0, 'failed': 0}
     lock = threading.Lock()
@@ -228,9 +232,10 @@ def randomize_dates(
             logger.error(f"Error processing {f.name}: {exc}")
             return False
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    pool_size, pool_tuner = pool_plan(max_workers, tuner, len(file_dates))
+    with ThreadPoolExecutor(max_workers=pool_size) as executor:
         futures = {
-            executor.submit(_process, f, d): f
+            executor.submit(call_in_slot, pool_tuner, f, _process, f, d): f
             for f, d in file_dates
         }
         for future in make_progress_bar(
@@ -239,6 +244,8 @@ def randomize_dates(
             total=len(futures),
         ):
             ok = future.result()
+            if pool_tuner is not None:
+                pool_tuner.maybe_adjust()
             with lock:
                 if ok:
                     stats['success'] += 1
@@ -254,6 +261,7 @@ def randomize_dates_per_folder(
     sync_exif: bool = True,
     max_workers: int = 4,
     extensions: set[str] | None = None,
+    tuner: AdaptiveTuner | None = None,
 ) -> dict[str, object]:
     """
     Randomize all date fields with a separate date range per folder.
@@ -272,13 +280,15 @@ def randomize_dates_per_folder(
         extensions: Set of file extensions to scan (default: IMAGE_EXTENSIONS).
             See randomize_dates() - sync_exif still gates on EXIF_EXTENSIONS
             regardless of this param, so video files never get EXIF writes.
+        tuner: Optional utils/adaptive.py AdaptiveTuner that adjusts how many
+            files are processed at once during large jobs (see pool_plan()).
 
     Returns:
         Dict with per-folder stats and totals.
     """
     total_stats = {'success': 0, 'failed': 0, 'folders': {}}
     lock = threading.Lock()
-    exts = extensions or IMAGE_EXTENSIONS
+    exts = media_only(extensions or IMAGE_EXTENSIONS)
 
     for entry in folder_ranges:
         folder = Path(entry['folder'])
@@ -317,14 +327,20 @@ def randomize_dates_per_folder(
                     logger.error(f"Error processing {f.name}: {exc}")
                     return False
 
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = {executor.submit(_process, f, d): f for f, d in file_dates}
+            pool_size, pool_tuner = pool_plan(max_workers, tuner, len(file_dates))
+            with ThreadPoolExecutor(max_workers=pool_size) as executor:
+                futures = {
+                    executor.submit(call_in_slot, pool_tuner, f, _process, f, d): f
+                    for f, d in file_dates
+                }
                 for future in make_progress_bar(
                     as_completed(futures),
                     desc=f"Dates {folder_name}",
                     total=len(futures),
                 ):
                     ok = future.result()
+                    if pool_tuner is not None:
+                        pool_tuner.maybe_adjust()
                     with lock:
                         if ok:
                             folder_stats['success'] += 1

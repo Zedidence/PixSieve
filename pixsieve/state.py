@@ -57,7 +57,7 @@ class ScanState:
             'recursive': True,
             'use_cache': True,
             'use_lsh': None,  # None = auto, True = force on, False = force off
-            'workers': 4,
+            'workers': None,  # None = auto (drive-aware)
             'auto_select_strategy': 'quality',  # quality, largest, smallest, newest, oldest
         }
         

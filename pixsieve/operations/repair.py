@@ -29,7 +29,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-from ..config import IMAGE_EXTENSIONS
+from ..config import IMAGE_EXTENSIONS, media_only
 from ..utils.operations import get_unique_path, make_progress_bar
 
 logger = logging.getLogger(__name__)
@@ -381,7 +381,7 @@ def scan_and_repair(
     """
     from ..scanner.file_discovery import find_image_files
 
-    exts = extensions or IMAGE_EXTENSIONS
+    exts = media_only(extensions or IMAGE_EXTENSIONS)
     trash_resolved = str(Path(trash_folder).resolve())
 
     # Discover all image files, excluding anything already in the trash folder

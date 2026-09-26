@@ -16,7 +16,7 @@ import logging
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from ..config import IMAGE_EXTENSIONS
+from ..config import IMAGE_EXTENSIONS, media_only
 from ..utils import (
     find_files,
     sanitize_filename,
@@ -114,7 +114,7 @@ def rename_random(
         - Parallel processing for better performance
     """
     root = Path(root_dir)
-    exts = extensions or IMAGE_EXTENSIONS
+    exts = media_only(extensions or IMAGE_EXTENSIONS)
     files = find_files(root, exts, recursive)
 
     if not files:
@@ -154,6 +154,7 @@ def rename_random(
 def rename_by_parent(
     root_dir: str | Path,
     dry_run: bool = False,
+    extensions: set[str] | None = None,
 ) -> dict[str, int]:
     """
     Rename files based on parent and grandparent folder names.
@@ -167,6 +168,9 @@ def rename_by_parent(
     Args:
         root_dir: Root directory containing organized folders
         dry_run: If True, only report what would be renamed (default: False)
+        extensions: File extensions to rename (default: IMAGE_EXTENSIONS;
+            add videos via config.resolve_extensions(..., include_videos=True)).
+            Anything that isn't an image or video is never renamed.
 
     Returns:
         Dictionary with statistics:
@@ -187,6 +191,7 @@ def rename_by_parent(
         - Resolves naming conflicts automatically
     """
     root = Path(root_dir)
+    exts = media_only(extensions or IMAGE_EXTENSIONS)
     stats = {'renamed': 0, 'skipped': 0, 'errors': 0}
 
     if not root.is_dir():
@@ -250,7 +255,7 @@ def rename_by_parent(
             to_rename: list[Path] = []
             for filename in filenames:
                 file_path = target_dir / filename
-                if not file_path.is_file():
+                if not file_path.is_file() or file_path.suffix.lower() not in exts:
                     continue
 
                 match = already_named_re.match(file_path.stem)

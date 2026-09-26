@@ -43,7 +43,7 @@ Content-Type: application/json
   "recursive": true,
   "useCache": true,
   "useLsh": null,
-  "workers": 4,
+  "workers": null,
   "resolveSymlinks": true,
   "autoSelectStrategy": "quality",
   "includeVideos": false
@@ -60,7 +60,7 @@ Content-Type: application/json
 - `recursive` (boolean, default `true`): Scan subdirectories
 - `useCache` (boolean, default `true`): Use the SQLite analysis cache
 - `useLsh` (boolean|null, default `null`): `null` = auto, `true` = force on, `false` = force off
-- `workers` (integer, 1–32, default `4`): Parallel analysis threads
+- `workers` (integer 1–32, or `null`; default `null`): Parallel analysis threads. `null` picks a count from the drive type and connection of the scanned directories (see [performance.md](performance.md#drive-aware-worker-counts)); the decision is reported in `/api/status` under `settings.storage`
 - `resolveSymlinks` (boolean, default `true`): Canonicalize symlinks during discovery (disable for a small speedup on drives with no symlinks)
 - `autoSelectStrategy` (string, default `"quality"`): Which image to auto-keep (`quality`, `largest`, `smallest`, `newest`, `oldest`). `quality` now includes a small (≤10 point) sharpness tiebreaker computed from the same thumbnail already produced for perceptual hashing - see `docs/performance.md`. `newest`/`oldest` prefer EXIF `DateTimeOriginal` over filesystem modification time when present, since mtime is frequently wrong after a copy/sync/backup; falls back to mtime when EXIF is absent (videos, PNGs, EXIF-stripped files) or was itself randomized by `metadata randomize-dates`.
 - `includeVideos` (boolean, default `false`): Also scan/deduplicate video files (requires `opencv-python-headless`)
@@ -484,6 +484,10 @@ Operations run in a background thread. Poll `/api/operations/status`, or subscri
 // Complete
 { "status": "complete", "operation": "rename-random", "result": { "success": 50, "failed": 0 }, "error": null, "progress": 100, "progress_text": "" }
 ```
+
+Every status also has a `workers` field: `null` for operations that don't run a thread pool, otherwise the drive-aware decision, e.g. `{"workers": 2, "source": "auto", "label": "USB SSD", "reason": "USB SSD -> 2 workers (copy)", "op": "copy", "floor": 1, "ceiling": 4, "drives": [...], "probe": null}`. `source` is `auto`, `probe` (refined by the speed test), `user` (explicit `workers` in the request), `env` (`PIXSIEVE_WORKERS`) or `fallback` (drive type unknown, or tuning off).
+
+The `move-to-parent`, `move`, `rename/random`, `metadata/randomize-dates`, `metadata/randomize-dates-per-folder`, `repair` and `pipeline` endpoints accept an optional `workers` field (integer, or `null`/omitted for automatic; `rename/random`, `repair` and `pipeline` allow 1–16, the others 1–32).
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|

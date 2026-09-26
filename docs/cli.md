@@ -74,7 +74,9 @@ python -m pixsieve cli duplicates /library /incoming --reference-dir /library --
 | `-a, --action ACTION` | Action: `report`, `delete`, `move`, `hardlink`, `symlink`. Default: `report` |
 | `--trash-dir PATH` | Directory for moved duplicates (for `--action move`) |
 | `--no-dry-run` | Actually perform the action |
-| `-w, --workers N` | Number of parallel workers |
+| `-w, --workers N` | Number of parallel workers (1–32, or `auto`). Default: `auto` — chosen from the drive type, see [performance.md](performance.md#drive-aware-worker-counts) |
+| `--storage-profile [PATH=]TYPE` | Override drive detection when it misclassifies a drive, e.g. `usb-hdd` or `E:=usb-ssd` (repeatable). Types: `nvme`, `ssd`, `usb-ssd`, `hdd`, `usb-hdd`, `usb`, `sd`, `network`, `ram` |
+| `--no-io-probe` | Skip the short read-only speed test used to classify ambiguous (e.g. USB) drives |
 | `-e, --export PATH` | Export results to file |
 | `--export-format FMT` | Export format: `txt` or `csv` |
 | `--no-cache` | Disable SQLite caching |
@@ -83,6 +85,18 @@ python -m pixsieve cli duplicates /library /incoming --reference-dir /library --
 | `--log-file PATH` | Also write logs to this file (recommended for long, unattended scans) |
 
 **Platform notes:** `--action hardlink` requires the same filesystem; on Windows it needs admin privileges. `--action symlink` on Windows needs admin privileges or Developer Mode.
+
+### Checking what PixSieve detects
+
+```bash
+# Drive type, connection, and the worker count each kind of operation would use
+pixsieve-cli storage /path/to/photos /mnt/usb-drive
+
+# Also run the read-only speed test on files under each path
+pixsieve-cli storage /mnt/usb-drive --probe
+```
+
+`move-to-parent`, `move`, `rename random`, `metadata randomize-dates` and `pipeline` accept the same `-w/--workers`, `--storage-profile` and `--no-io-probe` options as `duplicates`.
 
 ---
 
@@ -141,7 +155,7 @@ python -m pixsieve cli rename parent /path/to/photos --no-dry-run
 | Option | Description |
 |--------|-------------|
 | `--length` | Length of random name (default: 12) |
-| `-w, --workers` | Number of parallel workers (default: 4) |
+| `-w, --workers` | Number of parallel workers (1–16, or `auto`). Default: `auto` — chosen from the drive type |
 | `--extensions` | Only rename files with these extensions |
 | `--no-recursive` | Do not process subdirectories |
 | `--no-dry-run` | Actually perform the operation (default is dry-run/simulate only) |

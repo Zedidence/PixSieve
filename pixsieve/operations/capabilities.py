@@ -35,19 +35,10 @@ from __future__ import annotations
 
 OPERATION_VIDEO_SUPPORT: dict[str, dict[str, object]] = {
     "rename-random": {"support": "full", "needs_flag": True, "note": None},
-    "rename-parent": {
-        "support": "full", "needs_flag": False,
-        "note": "Unfiltered today - already renames every file including video.",
-    },
+    "rename-parent": {"support": "full", "needs_flag": True, "note": None},
     "move-to-parent": {"support": "full", "needs_flag": True, "note": None},
-    "move": {
-        "support": "full", "needs_flag": False,
-        "note": "move_with_structure is unfiltered today - already moves every file including video.",
-    },
-    "sort-alpha": {
-        "support": "full", "needs_flag": False,
-        "note": "Unfiltered today - already sorts every file including video.",
-    },
+    "move": {"support": "full", "needs_flag": True, "note": None},
+    "sort-alpha": {"support": "full", "needs_flag": True, "note": None},
     "strip-ratings": {"support": "full", "needs_flag": True, "note": None},
     "cleanup": {
         "support": "full", "needs_flag": False,

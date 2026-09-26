@@ -10,6 +10,24 @@ from PIL import Image
 import os
 
 
+@pytest.fixture(autouse=True)
+def _fixed_worker_counts(monkeypatch):
+    """
+    Keep drive-aware worker tuning out of the suite by default: with it off,
+    every call site uses its fixed legacy count and no test shells out to
+    PowerShell/diskutil. Tests of the tuning itself opt back in with
+    monkeypatch.setattr(config, 'AUTO_WORKERS', True).
+    """
+    from pixsieve import config
+    from pixsieve.utils import worker_policy
+    monkeypatch.setattr(config, 'AUTO_WORKERS', False)
+    monkeypatch.setattr(config, 'ENV_WORKERS', None)
+    monkeypatch.setattr(config, 'STORAGE_OVERRIDES', {})
+    worker_policy.reset_caches()
+    yield
+    worker_policy.reset_caches()
+
+
 @pytest.fixture
 def temp_dir():
     """Create a temporary directory for tests."""

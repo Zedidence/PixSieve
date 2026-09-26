@@ -26,7 +26,7 @@ class TestSortAlphabetical:
 
     def test_dry_run_no_folders_created(self, temp_dir):
         """Dry-run doesn't create group folders."""
-        (temp_dir / "apple.txt").write_text("data")
+        (temp_dir / "apple.jpg").write_text("data")
 
         stats = sort_alphabetical(temp_dir, dry_run=True)
         assert stats['moved'] == 1
@@ -34,45 +34,45 @@ class TestSortAlphabetical:
 
     def test_actual_sorts_into_groups(self, temp_dir):
         """Files are moved into correct alphabetical groups."""
-        (temp_dir / "apple.txt").write_text("data")
-        (temp_dir / "banana.txt").write_text("data")
-        (temp_dir / "mango.txt").write_text("data")
-        (temp_dir / "zebra.txt").write_text("data")
+        (temp_dir / "apple.jpg").write_text("data")
+        (temp_dir / "banana.jpg").write_text("data")
+        (temp_dir / "mango.jpg").write_text("data")
+        (temp_dir / "zebra.jpg").write_text("data")
 
         stats = sort_alphabetical(temp_dir, dry_run=False)
         assert stats['moved'] == 4
 
-        assert (temp_dir / "A-G" / "apple.txt").exists()
-        assert (temp_dir / "A-G" / "banana.txt").exists()
-        assert (temp_dir / "H-N" / "mango.txt").exists()
-        assert (temp_dir / "U-Z" / "zebra.txt").exists()
+        assert (temp_dir / "A-G" / "apple.jpg").exists()
+        assert (temp_dir / "A-G" / "banana.jpg").exists()
+        assert (temp_dir / "H-N" / "mango.jpg").exists()
+        assert (temp_dir / "U-Z" / "zebra.jpg").exists()
 
     def test_digits_go_to_0_9(self, temp_dir):
         """Files starting with digits go to 0-9 group."""
-        (temp_dir / "1file.txt").write_text("data")
-        (temp_dir / "9photo.txt").write_text("data")
+        (temp_dir / "1file.jpg").write_text("data")
+        (temp_dir / "9photo.jpg").write_text("data")
 
         stats = sort_alphabetical(temp_dir, dry_run=False)
         assert stats['moved'] == 2
-        assert (temp_dir / "0-9" / "1file.txt").exists()
-        assert (temp_dir / "0-9" / "9photo.txt").exists()
+        assert (temp_dir / "0-9" / "1file.jpg").exists()
+        assert (temp_dir / "0-9" / "9photo.jpg").exists()
 
     def test_special_chars_skipped(self, temp_dir):
         """Files starting with special characters are skipped."""
-        (temp_dir / "_hidden.txt").write_text("data")
+        (temp_dir / "_hidden.jpg").write_text("data")
 
         stats = sort_alphabetical(temp_dir, dry_run=False)
         assert stats['skipped'] == 1
 
     def test_case_insensitive(self, temp_dir):
         """Grouping is case-insensitive."""
-        (temp_dir / "Apple.txt").write_text("data")
-        (temp_dir / "apple2.txt").write_text("data")
+        (temp_dir / "Apple.jpg").write_text("data")
+        (temp_dir / "apple2.jpg").write_text("data")
 
         stats = sort_alphabetical(temp_dir, dry_run=False)
         assert stats['moved'] == 2
-        assert (temp_dir / "A-G" / "Apple.txt").exists()
-        assert (temp_dir / "A-G" / "apple2.txt").exists()
+        assert (temp_dir / "A-G" / "Apple.jpg").exists()
+        assert (temp_dir / "A-G" / "apple2.jpg").exists()
 
 
 class TestColorImageSorterGetColorName:

@@ -13,7 +13,7 @@ from typing import Any, Literal, Optional
 from flask import jsonify
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
-from ..config import WINDOWS_RESERVED_NAMES, DEFAULT_API_WORKERS, WINDOWS_INVALID_FILENAME_CHARS
+from ..config import WINDOWS_RESERVED_NAMES, WINDOWS_INVALID_FILENAME_CHARS
 
 
 # ---------------------------------------------------------------------------
@@ -69,7 +69,8 @@ class ScanRequest(BaseModel):
     recursive: bool = True
     useCache: bool = True
     useLsh: Optional[bool] = None
-    workers: int = Field(DEFAULT_API_WORKERS, ge=1, le=32)
+    # null = pick automatically from the drive type (utils/worker_policy.py)
+    workers: Optional[int] = Field(None, ge=1, le=32)
     resolveSymlinks: bool = True
     autoSelectStrategy: str = 'quality'
     includeVideos: bool = False
@@ -197,21 +198,32 @@ class DirectoryRequest(BaseModel):
     dryRun: bool = True
 
 
+class MediaDirectoryRequest(DirectoryRequest):
+    """Directory + dryRun + includeVideos (images only unless includeVideos)."""
+    includeVideos: bool = False
+
+
 class MoveRequest(DirectoryRequest):
     destination: str = Field(..., min_length=1)
     overwrite: bool = False
+    includeVideos: bool = False
+    # null = pick automatically from the drive type (utils/worker_policy.py)
+    workers: Optional[int] = Field(None, ge=1, le=32)
 
 
 class MoveToParentRequest(DirectoryRequest):
     includeVideos: bool = False
     extensions: Optional[list[str]] = None
+    # null = pick automatically from the drive type (utils/worker_policy.py)
+    workers: Optional[int] = Field(None, ge=1, le=32)
 
 
 class RenameRandomRequest(DirectoryRequest):
     nameLength: int = Field(12, ge=4, le=64)
     extensions: Optional[list[str]] = None
     recursive: bool = True
-    workers: int = Field(DEFAULT_API_WORKERS, ge=1, le=16)
+    # null = pick automatically from the drive type (utils/worker_policy.py)
+    workers: Optional[int] = Field(None, ge=1, le=16)
     includeVideos: bool = False
 
 
@@ -230,6 +242,8 @@ class DateRangeRequest(DirectoryRequest):
     # under its old name (randomize_file_dates) -- see operations_routes.py.
     syncExif: bool = False
     includeVideos: bool = False
+    # null = pick automatically from the drive type (utils/worker_policy.py)
+    workers: Optional[int] = Field(None, ge=1, le=32)
 
     @model_validator(mode='after')
     def start_before_end(self) -> 'DateRangeRequest':
@@ -250,6 +264,8 @@ class RandomizeDatesPerFolderRequest(BaseModel):
     dryRun: bool = True
     syncExif: bool = False
     includeVideos: bool = False
+    # null = pick automatically from the drive type (utils/worker_policy.py)
+    workers: Optional[int] = Field(None, ge=1, le=32)
 
 
 class RecursiveVideoRequest(DirectoryRequest):
@@ -281,6 +297,8 @@ class PipelineRequest(DirectoryRequest):
     deleteOriginals: bool = False
     recursive: bool = True
     includeVideos: bool = False
+    # null = pick automatically from the drive type (utils/worker_policy.py)
+    workers: Optional[int] = Field(None, ge=1, le=16)
 
 
 class RepairRequest(BaseModel):
@@ -289,5 +307,6 @@ class RepairRequest(BaseModel):
     dryRun: bool = True
     attemptRepair: bool = True
     quarantineUnfixable: bool = True
-    workers: int = Field(DEFAULT_API_WORKERS, ge=1, le=16)
+    # null = pick automatically from the drive type (utils/worker_policy.py)
+    workers: Optional[int] = Field(None, ge=1, le=16)
     includeVideos: bool = False

@@ -580,6 +580,28 @@ header p {
     margin-top: 8px;
 }
 
+/* Drive-aware worker count, e.g. "USB SSD → 4 workers" */
+.storage-badge {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 2px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--accent-dim);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    white-space: nowrap;
+}
+
+.storage-badge[hidden] {
+    display: none;
+}
+
+.ops-run-header .storage-badge {
+    margin-top: 0;
+}
+
 /* Live Stats */
 .live-stats {
     display: grid;
